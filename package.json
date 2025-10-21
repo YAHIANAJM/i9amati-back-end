@@ -1,0 +1,36 @@
+{
+  "name": "iqamati-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "cross-env NODE_ENV=development nodemon server.js",
+    "start": "cross-env NODE_ENV=production node server.js",
+    "db:push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "bcryptjs": "^3.0.2",
+    "connect-pg-simple": "^10.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.1",
+    "drizzle-orm": "^0.39.1",
+    "drizzle-zod": "^0.7.0",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "jsonwebtoken": "^9.0.2",
+    "memorystore": "^1.6.7",
+    "mongodb": "^6.18.0",
+    "mongoose": "^8.17.1",
+    "mongose": "^0.0.2-security",
+    "nanoid": "^5.1.5",
+    "passport": "^0.7.0",
+    "passport-local": "^1.0.0",
+    "zod": "^3.24.2",
+    "zod-validation-error": "^3.4.0"
+  },
+  "devDependencies": {
+    "cross-env": "^10.0.0",
+    "drizzle-kit": "^0.30.4",
+    "nodemon": "^3.0.2"
+  }
+}

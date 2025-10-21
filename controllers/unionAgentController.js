@@ -1,0 +1,350 @@
+// backend/controllers/unionAgentController.js
+import UnionAgent from '../models/UnionAgent.js';
+import Apartment from '../models/Apartment.js';
+import User from '../models/User.js';
+import bcrypt from 'bcryptjs';
+
+// Helper: Generate next apartment code for an agent
+function getNextApartmentCode(prefix, lastCode) {
+  // If no apartments, start at 100
+  let nextNum = 100;
+  if (lastCode) {
+    const lastNum = parseInt(lastCode.replace(prefix, ''));
+    nextNum = lastNum + 1;
+  }
+  return `${prefix}${nextNum}`;
+}
+
+// Add a new apartment (with owners and credential generation)
+export const addApartment = async (req, res) => {
+  // Accept the requested fields from frontend
+  const {
+    building_name,
+    apartment_number,
+    owner_first_name,
+    owner_last_name,
+    real_estate_drawing,
+    apartment_space,
+    common_parts_space,
+    // optional legacy fields
+    name,
+    address,
+    type
+  } = req.body || {};
+
+  // Basic validation
+  if (!building_name || !apartment_number || !owner_first_name || !owner_last_name) {
+    return res.status(400).json({ error: 'building_name, apartment_number, owner_first_name and owner_last_name are required' });
+  }
+
+  const agent = await UnionAgent.findOne({ user: req.user.id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  // Find last apartment code for this agent
+  const lastApt = await Apartment.find({ agent: agent._id })
+    .sort({ code: -1 })
+    .limit(1);
+  const code = getNextApartmentCode(agent.prefix, lastApt[0]?.code);
+
+  // Ensure unique email for generated owner email
+  const ownerLocalPart = `${apartment_number.toLowerCase()}.${building_name.toLowerCase()}.${owner_first_name.toLowerCase()}`.replace(/\s+/g, '').replace(/[^a-z0-9.\-@]/g, '');
+  const email = `${ownerLocalPart}@owner.com`;
+  const existing = await User.findOne({ email });
+  if (existing) return res.status(409).json({ error: 'Owner email already exists' });
+
+  // Generate random 8-character password
+  const genPassword = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let out = '';
+    for (let i = 0; i < 8; i++) out += chars.charAt(Math.floor(Math.random() * chars.length));
+    return out;
+  };
+  const rawPassword = genPassword();
+  const password_hash = await bcrypt.hash(rawPassword, 10);
+
+  // Create apartment record with new fields and link to agent
+  const apt = new Apartment({
+    code,
+    name: name || `${building_name} ${apartment_number}`,
+    address,
+    type,
+    building_name,
+    apartment_number,
+    owner_first_name,
+    owner_last_name,
+    real_estate_drawing,
+    apartment_space: apartment_space ? Number(apartment_space) : undefined,
+    common_parts_space: common_parts_space ? Number(common_parts_space) : undefined,
+    owners: [],
+    residents: [],
+    agent: agent._id
+  });
+  await apt.save();
+
+  // Create owner user and link
+  const ownerName = `${owner_first_name} ${owner_last_name}`.trim();
+  const username = `${apartment_number.toLowerCase()}.${building_name.toLowerCase()}.${owner_first_name.toLowerCase()}`.replace(/\s+/g, '');
+  const user = new User({
+    name: ownerName,
+    username,
+    email,
+    password_hash,
+    role: 'property_owner',
+    apartment: apt._id,
+    status: 'ACTIVE'
+  });
+  await user.save();
+
+  // Link both ways
+  apt.owners.push(user._id);
+  apt.owner_user = user._id;
+  await apt.save();
+  agent.apartments.push(apt._id);
+  await agent.save();
+
+  // Return created apartment and owner credentials (raw password returned so agent can share it)
+  res.status(201).json({
+    apartment: apt,
+    owner: { _id: user._id, name: ownerName, username, email },
+    credentials: { email, password: rawPassword }
+  });
+};
+// Property owner: get their own apartment and property details
+export const getOwnerApartment = async (req, res) => {
+  const user = await User.findById(req.user.id);
+  if (!user || user.role !== 'property_owner') return res.status(403).json({ error: 'Forbidden' });
+  const apartment = await Apartment.findById(user.apartment)
+    .populate('owners', 'name username')
+    .populate('residents', 'name username');
+  if (!apartment) return res.status(404).json({ error: 'Apartment not found' });
+  res.json({ apartment });
+};
+
+// List all apartments for this agent
+export const listApartments = async (req, res) => {
+  const agent = await UnionAgent.findOne({ user: req.user.id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const apartments = await Apartment.find({ agent: agent._id })
+    .populate('owners', 'name username email')
+    .populate('residents', 'name username');
+  res.json(apartments);
+};
+
+// Add a resident (property owner) to an apartment
+export const addResident = async (req, res) => {
+  const { apartmentId, userId } = req.body;
+  const apt = await Apartment.findOne({ _id: apartmentId, agent: req.user.id });
+  if (!apt) return res.status(404).json({ error: 'Apartment not found' });
+  if (!apt.residents.includes(userId)) apt.residents.push(userId);
+  await apt.save();
+  // Link property owner to apartment
+  await User.findByIdAndUpdate(userId, { apartment: apt._id });
+  res.json(apt);
+};
+
+// Remove a resident from an apartment
+export const removeResident = async (req, res) => {
+  const { apartmentId, userId } = req.body;
+  const apt = await Apartment.findOne({ _id: apartmentId, agent: req.user.id });
+  if (!apt) return res.status(404).json({ error: 'Apartment not found' });
+  apt.residents = apt.residents.filter(r => r.toString() !== userId);
+  await apt.save();
+  // Unlink property owner from apartment
+  await User.findByIdAndUpdate(userId, { $unset: { apartment: 1 } });
+  res.json(apt);
+};
+
+// Edit apartment details (name)
+export const editApartment = async (req, res) => {
+  const { apartmentId, name } = req.body;
+  const apt = await Apartment.findOneAndUpdate(
+    { _id: apartmentId, agent: req.user.id },
+    { name },
+    { new: true }
+  );
+  if (!apt) return res.status(404).json({ error: 'Apartment not found' });
+  res.json(apt);
+};
+
+// Comments in code explain:
+// - How apartment codes are generated (prefix + next number)
+// - How agent/apartment/user relationships are handled
+// - How security is enforced (agent can only manage their own apartments)
+
+// --- Additional endpoints to match frontend usage ---
+
+// DELETE /api/union/apartments/:apartmentId
+export const deleteApartment = async (req, res) => {
+  const { apartmentId } = req.params;
+  const agent = await UnionAgent.findOne({ user: req.user.id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const apt = await Apartment.findOneAndDelete({ _id: apartmentId, agent: agent._id });
+  if (!apt) return res.status(404).json({ error: 'Apartment not found' });
+
+  // Remove ref from agent
+  agent.apartments = agent.apartments.filter(a => a.toString() !== apartmentId);
+  await agent.save();
+
+  // If caller asked to delete users as well, remove owner/resident user documents;
+  // otherwise just unlink their apartment field.
+  const shouldDeleteUsers = req.query.deleteUsers === 'true' || req.body?.deleteUsers === true;
+  const userIds = [...(apt.owners || []), ...(apt.residents || [])];
+  if (userIds.length > 0) {
+    if (shouldDeleteUsers) {
+      await User.deleteMany({ _id: { $in: userIds } });
+    } else {
+      await User.updateMany({ _id: { $in: userIds } }, { $unset: { apartment: 1 } });
+    }
+  }
+
+  res.json({ success: true });
+};
+
+// DELETE /api/union/apartments/:apartmentId/owner/:ownerId
+export const removeOwnerFromApartment = async (req, res) => {
+  const { apartmentId, ownerId } = req.params;
+  const agent = await UnionAgent.findOne({ user: req.user.id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const apt = await Apartment.findOne({ _id: apartmentId, agent: agent._id });
+  if (!apt) return res.status(404).json({ error: 'Apartment not found' });
+  apt.owners = apt.owners.filter(o => o.toString() !== ownerId);
+  await apt.save();
+  await User.findByIdAndUpdate(ownerId, { $unset: { apartment: 1 } });
+  res.json(apt);
+};
+
+// PUT /api/union/apartments/:apartmentId/owner/:ownerId
+export const updateOwnerInfo = async (req, res) => {
+  const { apartmentId, ownerId } = req.params;
+  const { name, email, username } = req.body || {};
+  const agent = await UnionAgent.findOne({ user: req.user.id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const apt = await Apartment.findOne({ _id: apartmentId, agent: agent._id });
+  if (!apt) return res.status(404).json({ error: 'Apartment not found' });
+  const user = await User.findByIdAndUpdate(ownerId, { name, email, username }, { new: true });
+  if (!user) return res.status(404).json({ error: 'Owner not found' });
+  res.json(user);
+};
+
+// POST /api/union/apartments/:apartmentId/owner
+export const addOwnerToApartment = async (req, res) => {
+  const { apartmentId } = req.params;
+  const { firstName, lastName } = req.body || {};
+  if (!firstName || !lastName) return res.status(400).json({ error: 'firstName and lastName required' });
+  const agent = await UnionAgent.findOne({ user: req.user.id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+  const apt = await Apartment.findOne({ _id: apartmentId, agent: agent._id });
+  if (!apt) return res.status(404).json({ error: 'Apartment not found' });
+
+  const ownerName = `${firstName} ${lastName}`.trim();
+  const username = `${firstName}${lastName}${apt.code}`.replace(/\s+/g, '');
+  const rawPassword = `${firstName}${lastName}${apt._id}`;
+  const password_hash = await bcrypt.hash(rawPassword, 10);
+  const email = `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${apt.code.toLowerCase()}@owners.iqamati.local`;
+  const user = new User({ name: ownerName, username, email, password_hash, role: 'property_owner', apartment: apt._id, status: 'ACTIVE' });
+  await user.save();
+  apt.owners.push(user._id);
+  await apt.save();
+  res.status(201).json({ owner: { _id: user._id, name: ownerName, username, email }, credentials: { username, password: rawPassword } });
+};
+
+// POST /api/union/apartments/owner-by-name
+// Body: { apartmentName, building_name (optional), firstName, lastName }
+export const addOwnerByApartmentName = async (req, res) => {
+  const { apartmentName, building_name, firstName, lastName } = req.body || {};
+  if (!apartmentName || !firstName || !lastName) return res.status(400).json({ error: 'apartmentName, firstName and lastName required' });
+
+  const agent = await UnionAgent.findOne({ user: req.user.id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  // Try to find an apartment for this agent that matches by apartment_number or name (case-insensitive)
+  const match = {
+    agent: agent._id,
+    $or: [
+      { apartment_number: new RegExp(`^${apartmentName}$`, 'i') },
+      { name: new RegExp(`^${apartmentName}$`, 'i') }
+    ]
+  };
+  if (building_name) match.building_name = new RegExp(`^${building_name}$`, 'i');
+
+  let apt = await Apartment.findOne(match);
+
+  // If apartment not found: if building_name provided, create the apartment; otherwise return 404
+  if (!apt) {
+    if (!building_name) return res.status(404).json({ error: 'Apartment not found. Provide building_name to create it.' });
+
+    // Create a minimal apartment record under this agent
+    // Generate next code similar to addApartment
+    const lastApt = await Apartment.find({ agent: agent._id }).sort({ code: -1 }).limit(1);
+    const code = getNextApartmentCode(agent.prefix, lastApt[0]?.code);
+    apt = new Apartment({
+      code,
+      name: `${building_name} ${apartmentName}`,
+      building_name,
+      apartment_number: apartmentName,
+      owners: [],
+      residents: [],
+      agent: agent._id
+    });
+    await apt.save();
+    agent.apartments.push(apt._id);
+    await agent.save();
+  }
+
+  // Create owner user and link (reuse pattern from addOwnerToApartment)
+  const ownerName = `${firstName} ${lastName}`.trim();
+  const username = `${firstName}${lastName}${apt.code}`.replace(/\s+/g, '');
+  const rawPassword = `${firstName}${lastName}${apt._id}`;
+  const password_hash = await bcrypt.hash(rawPassword, 10);
+  const email = `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${apt.code.toLowerCase()}@owners.iqamati.local`;
+
+  // Ensure email uniqueness; if exists, return conflict
+  const existingUser = await User.findOne({ email });
+  if (existingUser) return res.status(409).json({ error: 'Owner email already exists' });
+
+  const user = new User({ name: ownerName, username, email, password_hash, role: 'property_owner', apartment: apt._id, status: 'ACTIVE' });
+  await user.save();
+  apt.owners.push(user._id);
+  apt.owner_user = apt.owner_user || user._id;
+  await apt.save();
+
+  res.status(201).json({ owner: { _id: user._id, name: ownerName, username, email }, credentials: { username, password: rawPassword }, apartment: apt });
+};
+
+// DELETE /api/union/buildings/:buildingName
+// Deletes all apartments in a building for the current agent and their owner/resident users
+export const deleteBuilding = async (req, res) => {
+  const { buildingName } = req.params;
+  const agent = await UnionAgent.findOne({ user: req.user.id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+  const nameRegex = new RegExp(`^${String(buildingName).trim()}$`, 'i');
+  const apartments = await Apartment.find({ agent: agent._id, building_name: nameRegex });
+  if (!apartments || apartments.length === 0) {
+    return res.status(404).json({ error: 'No apartments found for this building' });
+  }
+
+  const aptIds = apartments.map(a => a._id);
+  // collect owner/resident ids
+  const userIds = [];
+  for (const a of apartments) {
+    if (Array.isArray(a.owners)) userIds.push(...a.owners.map(x => x.toString()));
+    if (Array.isArray(a.residents)) userIds.push(...a.residents.map(x => x.toString()));
+  }
+
+  // Remove apartments
+  await Apartment.deleteMany({ _id: { $in: aptIds } });
+
+  // Remove users referenced (owners/residents)
+  if (userIds.length > 0) {
+    // dedupe
+    const uniqueUserIds = [...new Set(userIds)];
+    await User.deleteMany({ _id: { $in: uniqueUserIds } });
+  }
+
+  // Remove references from agent.apartments
+  agent.apartments = (agent.apartments || []).filter(aid => !aptIds.some(x => x.toString() === aid.toString()));
+  await agent.save();
+
+  res.json({ success: true, deletedApartments: aptIds.length, deletedUsers: userIds.length });
+};
