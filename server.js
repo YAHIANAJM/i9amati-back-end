@@ -9,10 +9,13 @@ import serviceRoutes from './routes/service.js'
 import dashboardRoutes from './routes/dashboard.js'
 import alertsRoutes from './routes/alerts.js'
 import paymentsRoutes from './routes/payments.js'
+import cors from "cors";
 
 dotenv.config(); // Load environment variables
 
+
 const app = express();
+
 
 // Middleware
 app.use(express.json());
@@ -21,7 +24,7 @@ app.use(express.urlencoded({ extended: false }));
 // Enable CORS with environment-based configuration
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: '*',
     credentials: true,
   })
 );

@@ -54,6 +54,7 @@ async function registerRoutes(app) {
   // Voting routes
   app.get("/api/voting", (req, res) => {
     res.json({
+      
       votes: [
         { id: 1, title: "Building maintenance", status: "active", deadline: "2024-02-01" },
         { id: 2, title: "Parking rules", status: "completed", result: "approved" }
