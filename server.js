@@ -9,7 +9,6 @@ import serviceRoutes from './routes/service.js'
 import dashboardRoutes from './routes/dashboard.js'
 import alertsRoutes from './routes/alerts.js'
 import paymentsRoutes from './routes/payments.js'
-import cors from "cors";
 
 dotenv.config(); // Load environment variables
 
