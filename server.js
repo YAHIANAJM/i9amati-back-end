@@ -16,18 +16,18 @@ dotenv.config(); // Load environment variables
 
 const app = express();
 
-
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
-
-// Enable CORS with environment-based configuration
 app.use(
   cors({
     origin: '*',
     credentials: true,
   })
 );
+
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+// Enable CORS with environment-based configuration
 
 // Connect DB
 connectDB();
