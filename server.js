@@ -15,6 +15,8 @@ dotenv.config(); // Load environment variables
 
 const app = express();
 
+console.log("Environment Variables:", process.env);
+
 app.use(
   cors()
 );
