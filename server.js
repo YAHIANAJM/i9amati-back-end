@@ -12,6 +12,8 @@ import paymentsRoutes from './routes/payments.js'
 
 dotenv.config(); // Load environment variables
 
+console.log(process.env.MONGO_URI);
+
 
 const app = express();
 
