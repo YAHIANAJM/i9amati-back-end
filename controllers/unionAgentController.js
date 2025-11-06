@@ -18,23 +18,22 @@ function getNextApartmentCode(prefix, lastCode) {
 // Add a new apartment (with owners and credential generation)
 export const addApartment = async (req, res) => {
   // Accept the requested fields from frontend
-  const {
-    building_name,
-    apartment_number,
-    owner_first_name,
-    owner_last_name,
-    real_estate_drawing,
-    apartment_space,
-    common_parts_space,
-    // optional legacy fields
-    name,
-    address,
-    type
-  } = req.body || {};
+ const {
+  building_name,
+  apartment_number,
+  owners, // ← array of { firstName, lastName }
+  real_estate_drawing,
+  apartment_space,
+  common_parts_space,
+  name,
+  address,
+  type
+} = req.body;
+
 
   // Basic validation
-  if (!building_name || !apartment_number || !owner_first_name || !owner_last_name) {
-    return res.status(400).json({ error: 'building_name, apartment_number, owner_first_name and owner_last_name are required' });
+  if (!building_name || !apartment_number || !owners || owners.length === 0) {
+    return res.status(400).json({ error: 'building_name, apartment_number, and owners are required' });
   }
 
   const agent = await UnionAgent.findOne({ user: req.user.id });
@@ -64,22 +63,20 @@ export const addApartment = async (req, res) => {
 
   // Create apartment record with new fields and link to agent
   const apt = new Apartment({
-    code,
-    name: name || `${building_name} ${apartment_number}`,
-    address,
-    type,
-    building_name,
-    apartment_number,
-    owner_first_name,
-    owner_last_name,
-    real_estate_drawing,
-    apartment_space: apartment_space ? Number(apartment_space) : undefined,
-    common_parts_space: common_parts_space ? Number(common_parts_space) : undefined,
-    owners: [],
-    residents: [],
-    agent: agent._id
-  });
-  await apt.save();
+  code,
+  name: name || `${building_name} ${apartment_number}`,
+  address,
+  type,
+  building_name,
+  apartment_number,
+  real_estate_drawing,
+  apartment_space: apartment_space ? Number(apartment_space) : undefined,
+  common_parts_space: common_parts_space ? Number(common_parts_space) : undefined,
+  owners: [], // will fill below
+  residents: [],
+  agent: agent._id
+});
+await apt.save();
 
   // Create owner user and link
   const ownerName = `${owner_first_name} ${owner_last_name}`.trim();
