@@ -39,7 +39,8 @@ router.get('/owner/apartment', auth, requireRole('property_owner'), getOwnerApar
 // Manage residents (union agent only)
 router.post('/apartments/residents/add', auth, requireRole('union_agent'), addResident);
 router.post('/apartments/residents/remove', auth, requireRole('union_agent'), removeResident);
-router.post('/buildings/create-with-apartment-and-owners', auth, requireRole('union_agent'), createBuildingWithApartmentAndOwners);
+
+router.post('/buildings/createBuildingWithApartmentAndOwners', auth, requireRole('union_agent'), createBuildingWithApartmentAndOwners);
 
 // Edit apartment details (name)
 router.post('/apartments/edit', auth, requireRole('union_agent'), editApartment);
