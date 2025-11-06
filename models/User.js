@@ -1,15 +1,11 @@
 import mongoose from 'mongoose';
 
-
-
 const UserSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  username: { type: String, unique: true, sparse: true }, // for property owners
-  email: { type: String, unique: true, sparse: true },
-  phone: String,
-  password_hash: { type: String, required: true },
+  firstName: { type: String, required: true },
+  lastName: { type: String, required: true },
+  nationalId: { type: String }, // e.g., BW123****
   role: { type: String, enum: ['supervisor', 'union_agent', 'property_owner'], required: true },
-  apartment: { type: mongoose.Schema.Types.ObjectId, ref: 'Apartment' }, // for property owners
+  apartment: { type: mongoose.Schema.Types.ObjectId, ref: 'Apartment' },
   status: { type: String, enum: ['ACTIVE','INACTIVE'], default: 'ACTIVE' },
 }, { timestamps: true });
 
