@@ -182,14 +182,14 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
 
     // === 3️⃣ Create Apartment ===
     const apartmentData = {
-      name: apartment.name?.trim() || `${building.name} ${apartment.apartment_number}`,
-      apartment_number: apartment.apartment_number?.trim(),
-      type: apartment.type?.trim(),
-      floor: apartment.floor?.trim(),
-      space: apartment.space ? parseFloat(apartment.space) : undefined,
-      agent: agent._id,
-      building: newBuilding._id
-    };
+  apartment_number: apartment.apartment_number?.trim(),
+  floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
+  space: apartment.space ? parseFloat(apartment.space) : undefined,
+  name: apartment.name?.trim() || `${building.name} ${apartment.apartment_number}`,
+  type: apartment.type?.trim() || 'residential',
+  agent: agent._id,
+  building: newBuilding._id
+};
 
     if (!apartmentData.apartment_number) {
       return res.status(400).json({ error: 'Apartment number is required' });
