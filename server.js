@@ -9,6 +9,7 @@ import serviceRoutes from './routes/service.js'
 import dashboardRoutes from './routes/dashboard.js'
 import alertsRoutes from './routes/alerts.js'
 import paymentsRoutes from './routes/payments.js'
+import communityFeedRoutes from './routes/communityFeed.js'
 
 dotenv.config(); // Load environment variables
 
@@ -39,6 +40,7 @@ app.use('/api/services', serviceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/alerts', alertsRoutes);
 app.use('/api/payments', paymentsRoutes);
+app.use('/api/community', communityFeedRoutes);
 
 // Logging middleware
 app.use((req, res, next) => {
