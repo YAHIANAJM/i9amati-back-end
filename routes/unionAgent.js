@@ -16,7 +16,8 @@ import {
   updateOwnerInfo,
   addOwnerByApartmentName,
   addOwnerToApartment,
-  createBuildingWithApartmentAndOwners
+  createBuildingWithApartmentAndOwners,
+  getBuildingsForAgent
 } from '../controllers/unionAgentController.js';
 
 const router = express.Router();
@@ -35,6 +36,13 @@ router.post('/apartments', auth, requireRole('union_agent'), addApartment);
 
 // Property owner fetches their apartment
 router.get('/owner/apartment', auth, requireRole('property_owner'), getOwnerApartment);
+
+//get all building for that user union agent
+router.get('/buildings', 
+  auth, 
+  requireRole('union_agent'), 
+  getBuildingsForAgent
+);
 
 // Manage residents (union agent only)
 router.post('/apartments/residents/add', auth, requireRole('union_agent'), addResident);
