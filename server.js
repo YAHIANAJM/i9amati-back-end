@@ -13,7 +13,7 @@ import communityFeedRoutes from "./routes/communityFeed.js";
 import apartementRoutes from "./routes/Apartement.js";
 import propertyOwnerRoutes from "./routes/Propertyowner.js";
 import builldingRoutes from "./routes/Building.js";
-
+//testing
 dotenv.config(); // Load environment variables
 
 console.log(process.env.MONGO_URI);
