@@ -2,27 +2,35 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./db.js";
-import authRoutes from './routes/auth.js';
-import unionAgentRoutes from './routes/unionAgent.js';
-import registerRoutes from './routes.js'
-import serviceRoutes from './routes/service.js'
-import dashboardRoutes from './routes/dashboard.js'
-import alertsRoutes from './routes/alerts.js'
-import paymentsRoutes from './routes/payments.js'
-import communityFeedRoutes from './routes/communityFeed.js'
+import authRoutes from "./routes/auth.js";
+import unionAgentRoutes from "./routes/unionAgent.js";
+import registerRoutes from "./routes.js";
+import serviceRoutes from "./routes/service.js";
+import dashboardRoutes from "./routes/dashboard.js";
+import alertsRoutes from "./routes/alerts.js";
+import paymentsRoutes from "./routes/payments.js";
+import communityFeedRoutes from "./routes/communityFeed.js";
+import apartementRoutes from "./routes/Apartement.js";
+import propertyOwnerRoutes from "./routes/Propertyowner.js";
+import builldingRoutes from "./routes/Building.js";
 
 dotenv.config(); // Load environment variables
 
 console.log(process.env.MONGO_URI);
-
 
 const app = express();
 
 console.log("Environment Variables:", process.env);
 
 app.use(
-  cors()
+  cors({
+    origin: ["http://localhost:3000", "https://i9amati-frontend.vercel.app"], // allow frontend origins
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true,
+  })
 );
+
+router.options("*", cors()); // this allows OPTIONS requests
 
 // Middleware
 app.use(express.json());
@@ -34,13 +42,16 @@ app.use(express.urlencoded({ extended: false }));
 connectDB();
 
 // Register API routes
-app.use('/api/auth', authRoutes);
-app.use('/api/union', unionAgentRoutes);
-app.use('/api/services', serviceRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/alerts', alertsRoutes);
-app.use('/api/payments', paymentsRoutes);
-app.use('/api/community', communityFeedRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/api/union", unionAgentRoutes);
+app.use("/api/services", serviceRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/alerts", alertsRoutes);
+app.use("/api/payments", paymentsRoutes);
+app.use("/api/community", communityFeedRoutes);
+app.use("/api/apartments", apartementRoutes);
+app.use("/api/property-owners", propertyOwnerRoutes);
+app.use("/api/buildings", builldingRoutes);
 
 // Logging middleware
 app.use((req, res, next) => {
@@ -71,10 +82,8 @@ app.use((req, res, next) => {
   next();
 });
 
-
 // Register API routes
 registerRoutes(app);
-
 
 // Example route
 app.get("/", (req, res) => {
