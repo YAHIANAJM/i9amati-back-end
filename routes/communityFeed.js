@@ -4,6 +4,8 @@ import {
   createComment,
   deleteComment,
   getComments,
+  getCommentReplies,
+  likeComment,
   getAllGroups,
   getGroupMembers,
   updateGroupDetails,
@@ -24,6 +26,12 @@ router.post("/comments", createComment);
 
 // DELETE /api/community/comments/:commentId - Soft delete a comment (union_agent or group managers)
 router.delete("/comments/:commentId", deleteComment);
+
+// POST /api/community/comments/:commentId/like - Like or unlike a comment (group members only)
+router.post("/comments/:commentId/like", likeComment);
+
+// GET /api/community/comments/:commentId/replies - Get replies for a specific comment (paginated)
+router.get("/comments/:commentId/replies", getCommentReplies);
 
 // Group Management Routes
 
