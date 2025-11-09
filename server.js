@@ -30,6 +30,9 @@ app.use(cors({
 }));
 
 
+router.options("*", cors()); // this allows OPTIONS requests
+
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
