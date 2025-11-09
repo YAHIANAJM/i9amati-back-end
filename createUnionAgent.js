@@ -9,7 +9,7 @@ async function createUnionAgent() {
   await mongoose.connect(process.env.MONGO_URI);
 
   const email = 'ac1003.agent@example.com';
-  const password = 'AC1003pass!';
+  const password = '1003passAC!';
   const name = 'Union Agent AC1003';
   const prefix = 'AC';
 
