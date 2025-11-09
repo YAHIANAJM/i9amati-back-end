@@ -31,7 +31,7 @@ router.post("/login", async (req, res) => {
     );
     // Return user info (excluding password_hash)
     const { password_hash, ...userData } = user.toObject();
-    userData.res.json({ token, user: userData });
+    res.json({ token, user: userData });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
