@@ -22,15 +22,7 @@ const app = express();
 
 console.log("Environment Variables:", process.env);
 
-app.use(
-  cors({
-    origin: ["http://localhost:3000", "https://i9amati-frontend.vercel.app"], // allow frontend origins
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    credentials: true,
-  })
-);
-
-router.options("*", cors()); // this allows OPTIONS requests
+app.use(cors());
 
 // Middleware
 app.use(express.json());
