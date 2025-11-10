@@ -112,6 +112,105 @@ export const deleteComment = async (req, res) => {
   }
 };
 
+// Get replies for a specific comment (paginated) - group members only
+export const getCommentReplies = async (req, res) => {
+  try {
+    const { commentId } = req.params;
+    const paginationResult = validatePagination.safeParse(req.query);
+
+    if (!paginationResult.success) {
+      return res.status(400).json({ error: paginationResult.error.message });
+    }
+
+    // Check if the parent comment exists and is not deleted
+    const parentComment = await Comment.findById(commentId);
+    if (!parentComment) {
+      return res.status(404).json({ error: "Parent comment not found" });
+    }
+    if (parentComment.deleted_at) {
+      return res.status(404).json({ error: "Parent comment has been deleted" });
+    }
+
+    // Validate that user has access to the group this comment belongs to
+    const user = await User.findById(req.user.id);
+    if (!user.groups.includes(parentComment.group.toString())) {
+      return res
+        .status(403)
+        .json({ error: "You don't have access to this group" });
+    }
+
+    const { page = 1, limit = 10 } = paginationResult.data;
+
+    // Get replies (comments that have this comment as parent)
+    const replies = await Comment.find({
+      parent_comment_id: commentId,
+      deleted_at: null,
+      group: parentComment.group,
+    })
+      .populate("user", "name  email role")
+      .populate("group", "name")
+      .sort({ createdAt: -1 }) // Newest first for replies
+      .skip((page - 1) * limit)
+      .limit(limit);
+
+    res.json(replies);
+  } catch (error) {
+    console.error("Error fetching comment replies:", error);
+    res.status(500).json({ error: "Failed to fetch comment replies" });
+  }
+};
+
+// Like or unlike a comment - group members only
+export const likeComment = async (req, res) => {
+  try {
+    const { commentId } = req.params;
+
+    // Check if the comment exists and is not deleted
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
+      return res.status(404).json({ error: "Comment not found" });
+    }
+    if (comment.deleted_at) {
+      return res.status(404).json({ error: "Comment has been deleted" });
+    }
+
+    // Validate that user has access to the group this comment belongs to
+    const user = await User.findById(req.user.id);
+    if (!user.groups.includes(comment.group.toString())) {
+      return res
+        .status(403)
+        .json({ error: "You don't have access to this group" });
+    }
+
+    // Check if user already liked this comment
+    const userIdStr = req.user.id.toString();
+    const isLiked = comment.love_ids.some((id) => id.toString() === userIdStr);
+
+    if (isLiked) {
+      // Unlike: remove user from love_ids
+      comment.love_ids = comment.love_ids.filter(
+        (id) => id.toString() !== userIdStr
+      );
+    } else {
+      // Like: add user to love_ids
+      comment.love_ids.push(req.user.id);
+    }
+
+    await comment.save();
+
+    res.json({
+      message: isLiked
+        ? "Comment unliked successfully"
+        : "Comment liked successfully",
+      isLiked: !isLiked,
+      likesCount: comment.love_ids.length,
+    });
+  } catch (error) {
+    console.error("Error liking comment:", error);
+    res.status(500).json({ error: "Failed to like comment" });
+  }
+};
+
 // Optional: Get all comments (root level and nested) - can be used to display the feed
 export const getComments = async (req, res) => {
   try {
@@ -343,7 +442,10 @@ export const getGroupDetails = async (req, res) => {
 
     // Check if user has access to this group (is a member)
     const user = await User.findById(req.user.id);
-    if (!user.groups.includes(groupId)) {
+    if (
+      !user.groups.includes(groupId) &&
+      !group.managers.includes(req.user.id)
+    ) {
       return res
         .status(403)
         .json({ error: "You don't have access to this group" });
