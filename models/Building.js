@@ -14,6 +14,7 @@ const BuildingSchema = new mongoose.Schema({
   hasSwimmingPool: { type: Boolean, default: false },
   sharedParts: { type: String },
   description: { type: String },
+  group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' },
   apartments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Apartment' }]
 }, { timestamps: true });
 
