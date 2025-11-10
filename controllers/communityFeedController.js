@@ -442,7 +442,10 @@ export const getGroupDetails = async (req, res) => {
 
     // Check if user has access to this group (is a member)
     const user = await User.findById(req.user.id);
-    if (!user.groups.includes(groupId)) {
+    if (
+      !user.groups.includes(groupId) &&
+      !group.managers.includes(req.user.id)
+    ) {
       return res
         .status(403)
         .json({ error: "You don't have access to this group" });
