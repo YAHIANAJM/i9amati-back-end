@@ -16,10 +16,22 @@ export const createComment = async (req, res) => {
     if (!group_id) {
       return res.status(400).json({ error: "Group ID is required" });
     }
+    const group = await Group.findById(group_id);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
 
     // Validate that user has access to the group
     const user = await User.findById(req.user.id);
-    if (!user.groups.includes(group_id)) {
+    const isUnionAgent = user.role === "union_agent";
+
+    // Union agents can access groups they manage
+    // Other users need to be members or managers of the group
+    const hasAccess = isUnionAgent
+      ? group.managers.includes(req.user.id)
+      : user.groups.includes(group_id) || group.managers.includes(req.user.id);
+
+    if (!hasAccess) {
       return res
         .status(403)
         .json({ error: "You don't have access to this group" });
@@ -133,7 +145,17 @@ export const getCommentReplies = async (req, res) => {
 
     // Validate that user has access to the group this comment belongs to
     const user = await User.findById(req.user.id);
-    if (!user.groups.includes(parentComment.group.toString())) {
+    const group = await Group.findById(parentComment.group);
+    const isUnionAgent = user.role === "union_agent";
+
+    // Union agents can access groups they manage
+    // Other users need to be members or managers of the group
+    const hasAccess = isUnionAgent
+      ? group.managers.includes(req.user.id)
+      : user.groups.includes(parentComment.group.toString()) ||
+        group.managers.includes(req.user.id);
+
+    if (!hasAccess) {
       return res
         .status(403)
         .json({ error: "You don't have access to this group" });
@@ -176,7 +198,17 @@ export const likeComment = async (req, res) => {
 
     // Validate that user has access to the group this comment belongs to
     const user = await User.findById(req.user.id);
-    if (!user.groups.includes(comment.group.toString())) {
+    const group = await Group.findById(comment.group);
+    const isUnionAgent = user.role === "union_agent";
+
+    // Union agents can access groups they manage
+    // Other users need to be members or managers of the group
+    const hasAccess = isUnionAgent
+      ? group.managers.includes(req.user.id)
+      : user.groups.includes(comment.group.toString()) ||
+        group.managers.includes(req.user.id);
+
+    if (!hasAccess) {
       return res
         .status(403)
         .json({ error: "You don't have access to this group" });
@@ -227,7 +259,19 @@ export const getComments = async (req, res) => {
 
     // Validate that user has access to the group
     const user = await User.findById(req.user.id);
-    if (!user.groups.includes(group_id)) {
+    const group = await Group.findById(group_id);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+    const isUnionAgent = user.role === "union_agent";
+
+    // Union agents can access groups they manage
+    // Other users need to be members or managers of the group
+    const hasAccess = isUnionAgent
+      ? group.managers.includes(req.user.id)
+      : user.groups.includes(group_id) || group.managers.includes(req.user.id);
+
+    if (!hasAccess) {
       return res
         .status(403)
         .json({ error: "You don't have access to this group" });
@@ -308,9 +352,17 @@ export const getGroupMembers = async (req, res) => {
       return res.status(404).json({ error: "Group not found" });
     }
 
-    // Check if user has access to this group (is a member)
+    // Check if user has access to this group
     const user = await User.findById(req.user.id);
-    if (!user.groups.includes(groupId)) {
+    const isUnionAgent = user.role === "union_agent";
+
+    // Union agents can access groups they manage
+    // Other users need to be members or managers of the group
+    const hasAccess = isUnionAgent
+      ? group.managers.includes(req.user.id)
+      : user.groups.includes(groupId) || group.managers.includes(req.user.id);
+
+    if (!hasAccess) {
       return res
         .status(403)
         .json({ error: "You don't have access to this group" });
