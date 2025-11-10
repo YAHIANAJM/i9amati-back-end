@@ -147,7 +147,7 @@ export const getCommentReplies = async (req, res) => {
       deleted_at: null,
       group: parentComment.group,
     })
-      .populate("user", "firstName lastName email role")
+      .populate("user", "name  email role")
       .populate("group", "name")
       .sort({ createdAt: -1 }) // Newest first for replies
       .skip((page - 1) * limit)
