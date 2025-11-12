@@ -14,7 +14,9 @@ const BuildingSchema = new mongoose.Schema({
   hasSwimmingPool: { type: Boolean, default: false },
   sharedParts: { type: String },
   description: { type: String },
-  apartments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Apartment' }]
+  group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' },
+  apartments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Apartment' }],
+  agent: { type: mongoose.Schema.Types.ObjectId, ref: 'Agent' }, // Add this line
 }, { timestamps: true });
 
 export default mongoose.model('Building', BuildingSchema);

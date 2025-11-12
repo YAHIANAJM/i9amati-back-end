@@ -4,10 +4,10 @@
 import Building from '../models/Building.js';
 import Apartment from '../models/Apartment.js';
 import User from '../models/User.js';
-import UnionAgent from '../models/UnionAgent.js';
 import bcrypt from 'bcryptjs';
+import Group from '../models/Group.js'; // ✅ ADD THIS at the top with other imports
 import crypto from 'crypto';
-
+import mongoose from 'mongoose';
 /**
  * GET /api/union/buildings
  * Get all buildings with pagination (10 per page)
@@ -89,18 +89,23 @@ export const getBuildingById = async (req, res) => {
  * POST /api/union/buildings/createBuildingWithApartmentAndOwners
  * Create building + apartment + owners in one transaction
  */
+
 export const createBuildingWithApartmentAndOwners = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
-    const agent = await UnionAgent.findOne({ user: req.user.id });
-    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    // 1️⃣ Get the authenticated union agent user
+    const agent = await User.findById(req.user.id).session(session);
+    if (!agent) throw new Error("Agent user not found");
 
     const { building, apartment, owners } = req.body;
 
     if (!building || !apartment || !Array.isArray(owners) || owners.length === 0) {
-      return res.status(400).json({ error: 'Building, apartment, and at least one owner are required' });
+      throw new Error("Building, apartment, and at least one owner are required");
     }
 
-    // === 1️⃣ Parse and sanitize building data ===
+    // 2️⃣ Create building
     const buildingData = {
       name: building.name?.trim(),
       address: building.address?.trim(),
@@ -115,116 +120,123 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       hasSwimmingPool: building.hasSwimmingPool === true || building.hasSwimmingPool === 'true' || building.hasSwimmingPool === 'yes',
       sharedParts: building.sharedParts?.trim(),
       description: building.description?.trim(),
-      estateFeeNumber: building.estateFeeNumber?.trim(),
-      agent: {
-        name: building.agent?.name?.trim() || '',
-        company: building.agent?.company?.trim() || ''
-      },
+      agent: agent._id, // Use the authenticated agent's ObjectId
       residenceManager: building.residenceManager?.trim(),
       mainOwner: building.mainOwner?.trim() || null
     };
 
-    if (!buildingData.name) {
-      return res.status(400).json({ error: 'Building name is required' });
-    }
-
-    // === 2️⃣ Create Building ===
     const newBuilding = new Building(buildingData);
-    await newBuilding.save();
+    await newBuilding.save({ session });
 
-    // === 3️⃣ Create Apartment ===
+    // 3️⃣ Create apartment
     const apartmentData = {
+      number: apartment.apartment_number?.trim(),
       apartment_number: apartment.apartment_number?.trim(),
       floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
       space: apartment.space ? parseFloat(apartment.space) : undefined,
       name: apartment.name?.trim() || `${building.name} ${apartment.apartment_number}`,
       type: apartment.type?.trim() || 'residential',
       agent: agent._id,
-      building: newBuilding._id
+      building: newBuilding._id,
+      owners: [],
+      ownerCredentials: []
     };
 
-    if (!apartmentData.apartment_number) {
-      return res.status(400).json({ error: 'Apartment number is required' });
-    }
-
     const newApartment = new Apartment(apartmentData);
-    await newApartment.save();
+    await newApartment.save({ session });
 
-    // === 4️⃣ Create Owners ===
+    // 4️⃣ Create owners
     const createdOwners = [];
+    const ownerUserIds = [];
 
     for (const owner of owners) {
-      if (!owner.firstName || !owner.lastName) {
-        continue; // skip invalid
-      }
+      if (!owner.firstName || !owner.lastName) continue;
 
       const firstName = owner.firstName.trim();
       const lastName = owner.lastName.trim();
       const fullName = `${firstName} ${lastName}`;
 
-      // Generate email & username
-      const emailLocal = `${apartmentData.apartment_number.toLowerCase()}.${newBuilding.name.toLowerCase()}.${firstName.toLowerCase()}`.replace(/\s+/g, '').replace(/[^a-z0-9.\-@]/g, '');
+      const emailLocal = `${apartmentData.apartment_number.toLowerCase()}.${newBuilding.name.toLowerCase()}.${firstName.toLowerCase()}`
+        .replace(/\s+/g, '')
+        .replace(/[^a-z0-9.\-@]/g, '');
       const email = `${emailLocal}@owner.com`;
-      const username = emailLocal;
 
-      // Check email uniqueness
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        return res.status(409).json({ error: `Owner email already exists: ${email}` });
-      }
+      const existingUser = await User.findOne({ email }).session(session);
+      if (existingUser) throw new Error(`Owner email already exists: ${email}`);
 
-      // Generate password
-      const rawPassword = crypto.randomBytes(6).toString('hex');
-      const passwordHash = await bcrypt.hash(rawPassword, 10);
+      const rawPassword = owner.nationalId?.trim();
+      if (!rawPassword) throw new Error(`National ID required for owner: ${fullName}`);
 
-      // Create user
       const newUser = new User({
-        firstName,
-        lastName,
+        name: fullName,
         email,
-        password_hash: passwordHash,
+        password_hash: rawPassword, // plain password = national ID
         nationalId: owner.nationalId?.trim(),
         role: 'property_owner',
-        apartment: newApartment._id,
+        apartment: newApartment._id, // single apartment
         status: 'ACTIVE'
       });
 
-      await newUser.save();
+      await newUser.save({ session });
 
       // Link to apartment
       newApartment.owners.push(newUser._id);
+      newApartment.ownerCredentials.push({ owner: newUser._id, email, password: rawPassword });
+      ownerUserIds.push(newUser._id);
 
-      createdOwners.push({
-        name: fullName,
-        email,
-        password: rawPassword
-      });
+      createdOwners.push({ name: fullName, email, password: rawPassword });
     }
 
-    // Save apartment with owners
-    await newApartment.save();
+    await newApartment.save({ session });
 
-    // Link apartment to building
+    // 5️⃣ Link apartment to building
     newBuilding.apartments.push(newApartment._id);
-    await newBuilding.save();
+    await newBuilding.save({ session });
 
-    // Also link to agent
+    // 6️⃣ Link apartment to agent user
+    if (!agent.apartments) agent.apartments = [];
     agent.apartments.push(newApartment._id);
-    await agent.save();
+    await agent.save({ session });
 
-    // === 🎉 Success ===
+    // 7️⃣ Create private group
+    const groupName = `${buildingData.name} - Private Group`;
+    const groupDescription = `Private discussion group for residents of ${buildingData.name}`;
+
+    const newGroup = new Group({
+      name: groupName,
+      description: groupDescription,
+      managers: [req.user.id],
+      is_active: true
+    });
+
+    await newGroup.save({ session });
+
+    await User.updateMany(
+      { _id: { $in: ownerUserIds } },
+      { $push: { groups: newGroup._id } },
+      { session }
+    );
+
+    // ✅ Commit transaction
+    await session.commitTransaction();
+    session.endSession();
+
     res.status(201).json({
-      message: 'Building, apartment, and owners created successfully',
+      message: 'Building, apartment, owners, and private group created successfully',
       building: newBuilding,
       apartment: newApartment,
-      owners: createdOwners
+      owners: createdOwners,
+      group: { _id: newGroup._id, name: newGroup.name, description: newGroup.description }
     });
 
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
     console.error('Error in createBuildingWithApartmentAndOwners:', error);
-    res.status(500).json({ error: 'Failed to create building setup' });
+    res.status(500).json({ error: error.message || 'Failed to create building setup' });
   }
 };
+
 
 /**
  * DELETE /api/union/buildings/:buildingId
@@ -233,8 +245,10 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
 export const deleteBuilding = async (req, res) => {
   try {
     const { buildingId } = req.params;
-    const agent = await UnionAgent.findOne({ user: req.user.id });
-    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    
+    // Get the authenticated user (who should be a union agent)
+    const agent = await User.findById(req.user.id);
+    if (!agent) return res.status(404).json({ error: 'Agent user not found' });
 
     const building = await Building.findById(buildingId);
     if (!building) {
@@ -264,9 +278,13 @@ export const deleteBuilding = async (req, res) => {
     // Remove building
     await Building.findByIdAndDelete(buildingId);
 
-    // Remove references from agent
-    agent.apartments = (agent.apartments || []).filter(aid => !aptIds.some(x => x.toString() === aid.toString()));
-    await agent.save();
+    // Remove references from agent user
+    if (agent.apartments) {
+      agent.apartments = agent.apartments.filter(aid => 
+        !aptIds.some(x => x.toString() === aid.toString())
+      );
+      await agent.save();
+    }
 
     res.json({ 
       success: true, 

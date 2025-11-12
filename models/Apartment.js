@@ -3,8 +3,6 @@ import mongoose from 'mongoose';
 
 const ApartmentSchema = new mongoose.Schema({
   number: { type: String, required: true },
-  floor: { type: Number, required: true },
-  space: { type: Number, required: true },
   apartment_number: { type: String, required: true }, // clearer name
   floor: { type: Number },        // optional
   space: { type: Number },        // optional (in m²)
