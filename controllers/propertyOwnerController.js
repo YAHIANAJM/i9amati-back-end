@@ -3,7 +3,6 @@
 // ========================================
 import Apartment from '../models/Apartment.js';
 import User from '../models/User.js';
-import UnionAgent from '../models/UnionAgent.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 

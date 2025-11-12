@@ -1,7 +1,7 @@
 // backend/controllers/unionAgentController.js
-import UnionAgent from "../models/UnionAgent.js";
 import User from "../models/User.js";
 import Building from "../models/Building.js";
+import Apartment from "../models/Apartment.js";
 
 // Get agent profile - Use User schema
 export const getAgentProfile = async (req, res) => {
@@ -54,21 +54,23 @@ export const updateAgentProfile = async (req, res) => {
 // Get agent statistics
 export const getAgentStats = async (req, res) => {
   try {
-    const agent = await UnionAgent.findOne({ user: req.user.id });
-    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    const agent = await User.findById(req.user.id);
+    if (!agent) return res.status(404).json({ error: "Agent user not found" });
 
-    // Count buildings assigned to this agent
+    // Count buildings where this agent is assigned
     const totalBuildings = await Building.countDocuments({
-      _id: { $in: agent.buildings }
+      agent: req.user.id
     });
     
-    // Count apartments in those buildings
-    const totalApartments = agent.apartments?.length || 0;
+    // Count apartments where this agent is assigned
+    const totalApartments = await Apartment.countDocuments({
+      agent: req.user.id
+    });
     
-    // Count property owners in those apartments
+    // Count property owners in apartments assigned to this agent
     const totalOwners = await User.countDocuments({
       role: "property_owner",
-      apartment: { $in: agent.apartments || [] }
+      apartment: { $in: await Apartment.find({ agent: req.user.id }).distinct('_id') }
     });
 
     res.json({ 

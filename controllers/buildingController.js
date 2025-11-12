@@ -4,7 +4,6 @@
 import Building from '../models/Building.js';
 import Apartment from '../models/Apartment.js';
 import User from '../models/User.js';
-import UnionAgent from '../models/UnionAgent.js';
 import bcrypt from 'bcryptjs';
 import Group from '../models/Group.js'; // ✅ ADD THIS at the top with other imports
 import crypto from 'crypto';
@@ -96,9 +95,9 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
   session.startTransaction();
 
   try {
-    // 1️⃣ Find agent
-    const agent = await UnionAgent.findOne({ user: req.user.id }).session(session);
-    if (!agent) throw new Error("Agent not found");
+    // 1️⃣ Get the authenticated union agent user
+    const agent = await User.findById(req.user.id).session(session);
+    if (!agent) throw new Error("Agent user not found");
 
     const { building, apartment, owners } = req.body;
 
@@ -121,7 +120,7 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       hasSwimmingPool: building.hasSwimmingPool === true || building.hasSwimmingPool === 'true' || building.hasSwimmingPool === 'yes',
       sharedParts: building.sharedParts?.trim(),
       description: building.description?.trim(),
-      agent: { name: building.agent?.name?.trim() || '', company: building.agent?.company?.trim() || '' },
+      agent: agent._id, // Use the authenticated agent's ObjectId
       residenceManager: building.residenceManager?.trim(),
       mainOwner: building.mainOwner?.trim() || null
     };
@@ -194,7 +193,7 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
     newBuilding.apartments.push(newApartment._id);
     await newBuilding.save({ session });
 
-    // 6️⃣ Optionally link apartment to agent if agent has apartments field
+    // 6️⃣ Link apartment to agent user
     if (!agent.apartments) agent.apartments = [];
     agent.apartments.push(newApartment._id);
     await agent.save({ session });
@@ -246,8 +245,10 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
 export const deleteBuilding = async (req, res) => {
   try {
     const { buildingId } = req.params;
-    const agent = await UnionAgent.findOne({ user: req.user.id });
-    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    
+    // Get the authenticated user (who should be a union agent)
+    const agent = await User.findById(req.user.id);
+    if (!agent) return res.status(404).json({ error: 'Agent user not found' });
 
     const building = await Building.findById(buildingId);
     if (!building) {
@@ -277,9 +278,13 @@ export const deleteBuilding = async (req, res) => {
     // Remove building
     await Building.findByIdAndDelete(buildingId);
 
-    // Remove references from agent
-    agent.apartments = (agent.apartments || []).filter(aid => !aptIds.some(x => x.toString() === aid.toString()));
-    await agent.save();
+    // Remove references from agent user
+    if (agent.apartments) {
+      agent.apartments = agent.apartments.filter(aid => 
+        !aptIds.some(x => x.toString() === aid.toString())
+      );
+      await agent.save();
+    }
 
     res.json({ 
       success: true, 

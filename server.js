@@ -22,8 +22,13 @@ const app = express();
 
 console.log("Environment Variables:", process.env);
 
-app.use(cors());
-
+app.use(
+  cors({
+    origin: "*", // Allow all origins - only for testing
+    credentials: true,
+    optionsSuccessStatus: 200
+  })
+);
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));

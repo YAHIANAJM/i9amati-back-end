@@ -15,7 +15,8 @@ const BuildingSchema = new mongoose.Schema({
   sharedParts: { type: String },
   description: { type: String },
   group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group' },
-  apartments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Apartment' }]
+  apartments: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Apartment' }],
+  agent: { type: mongoose.Schema.Types.ObjectId, ref: 'Agent' }, // Add this line
 }, { timestamps: true });
 
 export default mongoose.model('Building', BuildingSchema);
