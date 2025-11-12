@@ -33,9 +33,7 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Enable CORS with environment-based configuration
 
-// Connect DB
 connectDB();
 
 // Register API routes
