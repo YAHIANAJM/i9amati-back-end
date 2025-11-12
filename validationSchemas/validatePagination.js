@@ -5,4 +5,9 @@ const validatePagination = z.object({
   limit: z.coerce.number().int().min(1).max(30).optional(),
 });
 
-export { validatePagination };
+const validatePaymentsQuery = z.object({
+  page: z.coerce.number().int().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(30).optional(),
+});
+
+export { validatePagination, validatePaymentsQuery };
