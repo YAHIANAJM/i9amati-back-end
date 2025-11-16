@@ -15,10 +15,11 @@ export const getOwnersByApartment = async (req, res) => {
   try {
     const { apartmentId } = req.params;
 
-    // Get apartment with building reference
+    // Get apartment with building reference AND owners
     const apartment = await Apartment.findById(apartmentId)
-      .select('apartment_number floor space building')
+      .select('apartment_number floor space building owners')
       .populate('building', 'name address')
+      .populate('owners', 'name email password_hash nationalId status createdAt') // ← FIX: populate owners from the apartment
       .lean();
 
     if (!apartment) {
@@ -27,15 +28,6 @@ export const getOwnersByApartment = async (req, res) => {
         message: 'Apartment not found'
       });
     }
-
-    // Get all owners for this apartment
-    const owners = await User.find({
-      apartment: apartmentId,
-      role: 'property_owner'
-    })
-      .select('firstName lastName email password_hash nationalId status createdAt')
-      .sort({ createdAt: -1 })
-      .lean();
 
     res.status(200).json({
       success: true,
@@ -46,8 +38,8 @@ export const getOwnersByApartment = async (req, res) => {
         space: apartment.space,
         building: apartment.building
       },
-      totalOwners: owners.length,
-      data: owners
+      totalOwners: apartment.owners?.length || 0,
+      data: apartment.owners || [] // ← FIX: get owners from the populated field
     });
 
   } catch (error) {

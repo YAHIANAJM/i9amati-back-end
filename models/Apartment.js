@@ -2,13 +2,14 @@
 import mongoose from 'mongoose';
 
 const ApartmentSchema = new mongoose.Schema({
+  code: { type: String },   // ← ADD THIS LINE
   number: { type: String, required: true },
   apartment_number: { type: String, required: true }, // clearer name
   floor: { type: Number },        // optional
   space: { type: Number },        // optional (in m²)
   name: { type: String },
   type: { type: String, default: 'residential' },
-  agent: { type: mongoose.Schema.Types.ObjectId, ref: 'UnionAgent', required: true },
+  agent: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }, // <--- CHANGED THIS
   building: { type: mongoose.Schema.Types.ObjectId, ref: 'Building', required: true },
   owners: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   

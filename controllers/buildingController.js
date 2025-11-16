@@ -19,20 +19,38 @@ export const getBuildings = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // Get buildings and total count in parallel
     const [buildings, totalCount] = await Promise.all([
       Building.find()
-        .select('name address residenceCode estateFeeNumber totalUnits numberOfBuildings createdAt')
+        .select('name address residenceCode propertyLandArea averageUnitsPerBuilding averageFloorsPerBuilding propertyPlanNumber  hasGarage hasSwimmingPool sharedParts  estateFeeNumber totalUnits numberOfBuildings createdAt')
         .skip(skip)
         .limit(limit)
-        .sort({ createdAt: -1 }) // Newest first
+        .sort({ createdAt: -1 })
         .lean(),
       Building.countDocuments()
     ]);
 
+    // Ensure all expected fields are present in the response
+    const fieldsToEnsure = [
+      'propertyLandArea', 'averageUnitsPerBuilding', 'averageFloorsPerBuilding',
+      'propertyPlanNumber', 'hasGarage', 'hasSwimmingPool', 'sharedParts',
+      'totalUnits', 'numberOfBuildings'
+    ];
+
+    const normalizedBuildings = buildings.map(building => {
+      const normalized = { ...building };
+      fieldsToEnsure.forEach(field => {
+        if (!(field in normalized)) {
+          normalized[field] = null; // Or whatever default value you prefer
+        }
+      });
+      return normalized;
+    });
+
+    console.log(`Fetched ${buildings.length} buildings out of ${totalCount} total.`); 
+
     res.status(200).json({
       success: true,
-      data: buildings,
+      data: normalizedBuildings, // Send the normalized data
       pagination: {
         currentPage: page,
         totalPages: Math.ceil(totalCount / limit),
@@ -89,7 +107,6 @@ export const getBuildingById = async (req, res) => {
  * POST /api/union/buildings/createBuildingWithApartmentAndOwners
  * Create building + apartment + owners in one transaction
  */
-
 export const createBuildingWithApartmentAndOwners = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -105,7 +122,7 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       throw new Error("Building, apartment, and at least one owner are required");
     }
 
-    // 2️⃣ Create building
+    // 2️⃣ Create building (unchanged)
     const buildingData = {
       name: building.name?.trim(),
       address: building.address?.trim(),
@@ -128,26 +145,30 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
     const newBuilding = new Building(buildingData);
     await newBuilding.save({ session });
 
-    // 3️⃣ Create apartment
+    // 3️⃣ Create apartment (unchanged, except owners array is populated later)
     const apartmentData = {
-      number: apartment.apartment_number?.trim(),
+      number: apartment.number?.trim(), // Use 'number' from screenshot field
       apartment_number: apartment.apartment_number?.trim(),
       floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
       space: apartment.space ? parseFloat(apartment.space) : undefined,
-      name: apartment.name?.trim() || `${building.name} ${apartment.apartment_number}`,
+      name: apartment.name?.trim() || `${buildingData.name} ${apartment.apartment_number}`,
       type: apartment.type?.trim() || 'residential',
+      share_percentage: apartment.share_percentage ? parseFloat(apartment.share_percentage) : undefined,
+      main_plot_number: apartment.main_plot_number?.trim(),
+      ownership_status: apartment.ownership_status?.trim(),
       agent: agent._id,
       building: newBuilding._id,
-      owners: [],
-      ownerCredentials: []
+      owners: [], // Will be populated below
+      ownerCredentials: [] // Will be populated below
     };
 
     const newApartment = new Apartment(apartmentData);
     await newApartment.save({ session });
 
-    // 4️⃣ Create owners
+    // 4️⃣ Create owners and link them correctly
     const createdOwners = [];
     const ownerUserIds = [];
+    let representativeOwner = null; // Track the representative
 
     for (const owner of owners) {
       if (!owner.firstName || !owner.lastName) continue;
@@ -164,41 +185,86 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       const existingUser = await User.findOne({ email }).session(session);
       if (existingUser) throw new Error(`Owner email already exists: ${email}`);
 
-      const rawPassword = owner.nationalId?.trim();
-      if (!rawPassword) throw new Error(`National ID required for owner: ${fullName}`);
+      const rawPassword = owner.nationalId?.trim(); // <-- Takes CIN
+if (!rawPassword) throw new Error(`National ID required for owner: ${fullName}`);
 
-      const newUser = new User({
-        name: fullName,
-        email,
-        password_hash: rawPassword, // plain password = national ID
-        nationalId: owner.nationalId?.trim(),
-        role: 'property_owner',
-        apartment: newApartment._id, // single apartment
-        status: 'ACTIVE'
-      });
+const newUser = new User({
+  name: fullName,
+  email: email,
+  role: "property_owner",       // <- Must match enum in schema                      // REQUIRED
+  password_hash: rawPassword,         // CIN as temporary password
+  phone: owner.phone || undefined,
+  cin: owner.nationalId || undefined,
+  isRepresentative: owner.isRepresentative || false,
+});
+
+
+// Later, for the representative:
+newApartment.ownerCredentials.push({
+  owner: newUser._id,
+  email: newUser.email,
+  password: rawPassword // <-- Stores CIN as the plaintext password for the agent
+});
 
       await newUser.save({ session });
 
-      // Link to apartment
+      // Add to apartment's owners array
       newApartment.owners.push(newUser._id);
-      newApartment.ownerCredentials.push({ owner: newUser._id, email, password: rawPassword });
       ownerUserIds.push(newUser._id);
 
-      createdOwners.push({ name: fullName, email, password: rawPassword });
+      // Check if this owner is the representative
+      if (owner.isRepresentative) {
+        if (representativeOwner) {
+          // Optional: Log a warning if multiple representatives are marked
+          console.warn(`Warning: Multiple representatives found for apartment ${apartmentData.apartment_number}. Using the first one.`);
+        } else {
+          // Only set credentials for the first representative found
+          newApartment.ownerCredentials.push({
+            owner: newUser._id,
+            email: newUser.email,
+            password: rawPassword // Plaintext password for agent view
+          });
+          representativeOwner = newUser; // Mark the found representative
+        }
+      }
+
+      createdOwners.push({
+        name: fullName,
+        email: newUser.email,
+        password: rawPassword, // Only for the representative (or all if not filtered, but now filtered)
+        isRepresentative: owner.isRepresentative // Include flag in response if needed
+      });
     }
 
-    await newApartment.save({ session });
+    // If no representative was explicitly marked, default to the first owner
+    if (!representativeOwner && newApartment.owners.length > 0) {
+        const firstOwnerId = newApartment.owners[0];
+        const firstOwner = await User.findById(firstOwnerId).session(session);
+        newApartment.ownerCredentials.push({
+            owner: firstOwner._id,
+            email: firstOwner.email,
+            password: firstOwner.password_hash // Assuming password_hash is the plain password here too
+        });
+        representativeOwner = firstOwner;
+        // Update the first owner in createdOwners array if needed
+        const firstOwnerIndex = createdOwners.findIndex(o => o.email === firstOwner.email);
+        if (firstOwnerIndex !== -1) {
+            createdOwners[firstOwnerIndex].isRepresentative = true;
+        }
+    }
 
-    // 5️⃣ Link apartment to building
+    await newApartment.save({ session }); // Save the updated apartment with owners and credentials
+
+    // 5️⃣ Link apartment to building (unchanged)
     newBuilding.apartments.push(newApartment._id);
     await newBuilding.save({ session });
 
-    // 6️⃣ Link apartment to agent user
+    // 6️⃣ Link apartment to agent user (unchanged)
     if (!agent.apartments) agent.apartments = [];
     agent.apartments.push(newApartment._id);
     await agent.save({ session });
 
-    // 7️⃣ Create private group
+    // 7️⃣ Create private group (unchanged)
     const groupName = `${buildingData.name} - Private Group`;
     const groupDescription = `Private discussion group for residents of ${buildingData.name}`;
 

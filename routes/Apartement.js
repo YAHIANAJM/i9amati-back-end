@@ -9,13 +9,14 @@ import {
   deleteApartment,
   addResident,
   removeResident,
-  editApartment
+  editApartment,
+  getApartmentById
 } from '../controllers/apartmentController.js';
 
 const router = express.Router();
 
 // List all apartments for current union agent
-router.get('/:id', auth, requireRole('union_agent'), listApartments);
+router.get('/:id', auth, requireRole('union_agent'), getApartmentById);
 
 router.get('/apartments-inbuilding/:buildingId', auth, requireRole('union_agent'), getApartmentsByBuilding);
 

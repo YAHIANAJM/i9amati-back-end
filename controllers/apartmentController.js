@@ -4,8 +4,6 @@
 import Building from '../models/Building.js';
 import Apartment from '../models/Apartment.js';
 import User from '../models/User.js';
-import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
 
 /**
  * GET /api/union/buildings/:buildingId/apartments
@@ -34,7 +32,7 @@ export const getApartmentsByBuilding = async (req, res) => {
       success: true,
       buildingName: building.name,
       totalApartments: apartments.length,
-      data: apartments
+       apartments
     });
 
   } catch (error) {
@@ -53,13 +51,16 @@ export const getApartmentsByBuilding = async (req, res) => {
  */
 export const listApartments = async (req, res) => {
   try {
-    const agent = await UnionAgent.findOne({ user: req.user.id });
+    // Find the user with role 'union_agent' based on the authenticated user ID
+    const agent = await User.findOne({ _id: req.user.id, role: 'union_agent' });
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
-    
+
+    // Find apartments where the agent field matches the agent's ID
+    // Populate only the 'owners' field, as 'residents' doesn't exist in the schema
     const apartments = await Apartment.find({ agent: agent._id })
-      .populate('owners', 'firstName lastName email')
-      .populate('residents', 'firstName lastName');
-    
+      .populate('owners', 'name email') // Use 'name' from User schema
+      .populate('building', 'name'); // Optionally populate building name
+
     res.json(apartments);
   } catch (error) {
     console.error('Error listing apartments:', error);
@@ -74,17 +75,15 @@ export const listApartments = async (req, res) => {
 export const deleteApartment = async (req, res) => {
   try {
     const { apartmentId } = req.params;
-    const agent = await UnionAgent.findOne({ user: req.user.id });
+    // Find the user with role 'union_agent' based on the authenticated user ID
+    const agent = await User.findOne({ _id: req.user.id, role: 'union_agent' });
     if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
     console.log('Attempting to delete apartment:', apartmentId, 'for agent:', agent._id);
-    
+
+    // Find apartment by ID and ensure the agent matches the authenticated user
     const apt = await Apartment.findOneAndDelete({ _id: apartmentId, agent: agent._id });
     if (!apt) return res.status(404).json({ error: 'Apartment not found' });
-
-    // Remove ref from agent
-    agent.apartments = agent.apartments.filter(a => a.toString() !== apartmentId);
-    await agent.save();
 
     // Remove from building
     if (apt.building) {
@@ -93,9 +92,10 @@ export const deleteApartment = async (req, res) => {
       });
     }
 
-    // Handle users
+    // Handle users (owners only, as residents don't exist in schema)
     const shouldDeleteUsers = req.query.deleteUsers === 'true' || req.body?.deleteUsers === true;
-    const userIds = [...(apt.owners || []), ...(apt.residents || [])];
+    // Use the 'owners' array from the apartment schema which holds User IDs
+    const userIds = [...(apt.owners || [])];
     if (userIds.length > 0) {
       if (shouldDeleteUsers) {
         await User.deleteMany({ _id: { $in: userIds } });
@@ -116,20 +116,8 @@ export const deleteApartment = async (req, res) => {
  * Add resident to apartment
  */
 export const addResident = async (req, res) => {
-  try {
-    const { apartmentId, userId } = req.body;
-    const apt = await Apartment.findOne({ _id: apartmentId, agent: req.user.id });
-    if (!apt) return res.status(404).json({ error: 'Apartment not found' });
-    
-    if (!apt.residents.includes(userId)) apt.residents.push(userId);
-    await apt.save();
-    
-    await User.findByIdAndUpdate(userId, { apartment: apt._id });
-    res.json(apt);
-  } catch (error) {
-    console.error('Error adding resident:', error);
-    res.status(500).json({ error: 'Failed to add resident' });
-  }
+  // This endpoint is now invalid as 'residents' field doesn't exist in the schema.
+  res.status(400).json({ error: 'Residents field does not exist in the Apartment schema.' });
 };
 
 /**
@@ -137,20 +125,8 @@ export const addResident = async (req, res) => {
  * Remove resident from apartment
  */
 export const removeResident = async (req, res) => {
-  try {
-    const { apartmentId, userId } = req.body;
-    const apt = await Apartment.findOne({ _id: apartmentId, agent: req.user.id });
-    if (!apt) return res.status(404).json({ error: 'Apartment not found' });
-    
-    apt.residents = apt.residents.filter(r => r.toString() !== userId);
-    await apt.save();
-    
-    await User.findByIdAndUpdate(userId, { $unset: { apartment: 1 } });
-    res.json(apt);
-  } catch (error) {
-    console.error('Error removing resident:', error);
-    res.status(500).json({ error: 'Failed to remove resident' });
-  }
+  // This endpoint is now invalid as 'residents' field doesn't exist in the schema.
+  res.status(400).json({ error: 'Residents field does not exist in the Apartment schema.' });
 };
 
 /**
@@ -160,6 +136,7 @@ export const removeResident = async (req, res) => {
 export const editApartment = async (req, res) => {
   try {
     const { apartmentId, name } = req.body;
+    // Find apartment where agent matches the authenticated user
     const apt = await Apartment.findOneAndUpdate(
       { _id: apartmentId, agent: req.user.id },
       { name },
@@ -170,5 +147,74 @@ export const editApartment = async (req, res) => {
   } catch (error) {
     console.error('Error editing apartment:', error);
     res.status(500).json({ error: 'Failed to edit apartment' });
+  }
+};
+
+// NEW: Get Apartment Details by ID
+export const getApartmentById = async (req, res) => {
+  try {
+    const { id } = req.params; // Use 'id' to match frontend call
+
+    // Find the apartment by ID
+    const apartment = await Apartment.findById(id)
+      .populate('building', 'name') // Optionally populate building name
+      .populate('owners', 'name email nationalId role status') // Populate owner details using 'name' from User schema
+      // Note: Populating 'agent' here might fail if the agent field still points to 'UnionAgent' in the DB.
+      // It should point to 'User' now. You might need to update existing docs or handle the ref.
+      .populate('agent', 'name email') // Populate agent details (assuming agent ID is now a User ID)
+      .lean(); // Use lean() for better performance if not modifying
+
+    if (!apartment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Apartment not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+       apartment
+    });
+
+  } catch (error) {
+    console.error('Error fetching apartment details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve apartment details',
+      error: error.message
+    });
+  }
+};
+
+// NEW: Get Building Details by ID (for frontend)
+export const getBuildingById = async (req, res) => {
+  try {
+    const { id } = req.params; // Use 'id' to match frontend call
+
+    // Find the building by ID
+    const building = await Building.findById(id)
+      .populate('agent', 'name email') // Optionally populate agent details
+      .populate('apartments', 'apartment_number floor space') // Optionally populate apartment count/summary
+      .lean(); // Use lean() for better performance if not modifying
+
+    if (!building) {
+      return res.status(404).json({
+        success: false,
+        message: 'Building not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+       building
+    });
+
+  } catch (error) {
+    console.error('Error fetching building details:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve building details',
+      error: error.message
+    });
   }
 };
