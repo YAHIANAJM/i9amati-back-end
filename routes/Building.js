@@ -4,13 +4,17 @@ import {
   getBuildings,
   getBuildingById,
   createBuildingWithApartmentAndOwners,
-  deleteBuilding
+  deleteBuilding,
+  createBuildingWithMultipleApartments
 } from '../controllers/buildingController.js';
 
 const router = express.Router();
 
 // Get all buildings (paginated - 10 per page)
 router.get('/', auth, requireRole('union_agent'), getBuildings);
+
+router.post('/createBuildingWithMultipleApartments', auth, requireRole('union_agent'), createBuildingWithMultipleApartments); // Add the new route
+
 
 // Get single building by ID
 router.get('/:buildingId', auth, requireRole('union_agent'), getBuildingById);

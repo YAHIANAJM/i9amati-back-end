@@ -3,17 +3,27 @@ import mongoose from "mongoose";
 const UserSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
-    email: { type: String, required: true, unique: true }, // ✅ ADD THIS
+    email: { type: String, required: true, unique: true },
     password_hash: { type: String, required: true },
-    nationalId: { type: String }, // e.g., BW123****
+
+    nationalId: { type: String }, // CIN or passport
+
     role: {
       type: String,
       enum: ["supervisor", "union_agent", "property_owner"],
       required: true,
     },
-    apartment: { type: mongoose.Schema.Types.ObjectId, ref: "Apartment" },
-    groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }], // groups the user belongs to
-    status: { type: String, enum: ["ACTIVE", "INACTIVE"], default: "ACTIVE" },
+
+    // owner can own multiple apartments
+    apartments: [{ type: mongoose.Schema.Types.ObjectId, ref: "Apartment" }],
+
+    groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }],
+
+    status: {
+      type: String,
+      enum: ["ACTIVE", "INACTIVE"],
+      default: "ACTIVE",
+    },
   },
   { timestamps: true }
 );

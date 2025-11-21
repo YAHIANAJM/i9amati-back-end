@@ -7,8 +7,6 @@ import {
   getApartmentsByBuilding,
   listApartments,
   deleteApartment,
-  addResident,
-  removeResident,
   editApartment,
   getApartmentById
 } from '../controllers/apartmentController.js';
@@ -27,7 +25,7 @@ router.delete('/:apartmentId', auth, requireRole('union_agent'), deleteApartment
 router.post('/edit', auth, requireRole('union_agent'), editApartment);
 
 // Manage residents
-router.post('/residents/add', auth, requireRole('union_agent'), addResident);
-router.post('/residents/remove', auth, requireRole('union_agent'), removeResident);
+//router.post('/residents/add', auth, requireRole('union_agent'), addResident);
+//router.post('/residents/remove', auth, requireRole('union_agent'), removeResident);
 
 export default router;
