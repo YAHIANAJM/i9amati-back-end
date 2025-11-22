@@ -6,7 +6,7 @@ const BuildingSchema = new mongoose.Schema(
     building_name: { type: String, required: true },
     building_address: { type: String },
 
-    residenceCode: { type: String, unique: true },
+    // residenceCode removed: frontend no longer uses this server-side
 
     land_area_sqm: { type: Number },
     total_units: { type: Number },
@@ -15,9 +15,15 @@ const BuildingSchema = new mongoose.Schema(
     avg_floors_per_block: { type: Number },
 
     original_title_number: { type: String }, // الرسم العقاري
+    propertyPlanNumber: { type: String },
+    // New fields to represent shared-title relationships
+    hasSharedParts: { type: Boolean, default: false },
+    sharedWithTitleDeed: { type: String, default: null }, // stores another building.propertyPlanNumber
 
     has_garage: { type: Boolean, default: false },
     has_pool: { type: Boolean, default: false },
+    hasElevator: { type: Boolean, default: false },
+    has_elevator: { type: Boolean, default: false },
     has_shared_parts_with_other_buildings: { type: Boolean, default: false },
 
     documents: [{ type: String }],

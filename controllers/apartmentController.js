@@ -96,6 +96,11 @@ export const createApartmentForBuilding = async (req, res) => {
       return res.status(400).json({ error: 'Apartment data and buildingId are required' });
     }
 
+    // Require canonical main_plot_number instead of legacy number/plot_number
+    if (!apartment.main_plot_number || !apartment.main_plot_number.trim()) {
+      return res.status(400).json({ error: "Apartment must include 'main_plot_number' (canonical plot identifier)" });
+    }
+
     // Verify building exists
     const building = await Building.findById(buildingId).session(session);
     if (!building) {
@@ -113,7 +118,7 @@ export const createApartmentForBuilding = async (req, res) => {
       unit_code: apartment.apartment_number?.trim(),
       unit_description: apartment.ownership_status?.trim(),
       registration_number: apartment.main_plot_number?.trim(),
-      division_number: apartment.number?.trim(), // plot_number from frontend
+      division_number: apartment.main_plot_number?.trim(),
       
       area_sqm: apartment.space ? parseFloat(apartment.space) : undefined,
       floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
