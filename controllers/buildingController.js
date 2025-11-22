@@ -22,7 +22,7 @@ export const getBuildings = async (req, res) => {
 
     const [buildings, totalCount] = await Promise.all([
       Building.find()
-        .select('name address residenceCode propertyLandArea averageUnitsPerBuilding averageFloorsPerBuilding propertyPlanNumber hasGarage hasSwimmingPool sharedParts estateFeeNumber totalUnits numberOfBuildings createdAt building_code building_name building_address land_area_sqm number_of_blocks avg_units_per_block avg_floors_per_block original_title_number has_pool has_shared_parts_with_other_buildings documents description')
+        .select('name address propertyLandArea averageUnitsPerBuilding averageFloorsPerBuilding propertyPlanNumber hasGarage hasSwimmingPool hasSharedParts sharedWithTitleDeed sharedParts estateFeeNumber totalUnits numberOfBuildings createdAt building_code building_name building_address land_area_sqm number_of_blocks avg_units_per_block avg_floors_per_block original_title_number has_pool has_shared_parts_with_other_buildings documents description')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -125,20 +125,26 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       throw new Error("Building, apartment, and at least one owner are required");
     }
 
+    // Enforce new plot identifier: require main_plot_number
+    if (!apartment.main_plot_number || !apartment.main_plot_number.trim()) {
+      throw new Error("Apartment must include 'main_plot_number' (canonical plot identifier)");
+    }
+
     // 2️⃣ Create building with correct field mapping
     const buildingData = {
       building_name: building.name?.trim(),
-      building_code: building.residenceCode?.trim(),
       building_address: building.address?.trim(),
-      residenceCode: building.residenceCode?.trim(),
       land_area_sqm: building.propertyLandArea ? parseFloat(building.propertyLandArea) : undefined,
       number_of_blocks: building.numberOfBuildings ? parseInt(building.numberOfBuildings, 10) : undefined,
       avg_units_per_block: building.averageUnitsPerBuilding ? parseInt(building.averageUnitsPerBuilding, 10) : undefined,
       avg_floors_per_block: building.averageFloorsPerBuilding ? parseInt(building.averageFloorsPerBuilding, 10) : undefined,
       total_units: building.totalUnits ? parseInt(building.totalUnits, 10) : undefined,
       original_title_number: building.propertyPlanNumber?.trim(),
+      propertyPlanNumber: building.propertyPlanNumber?.trim(),
       has_garage: building.hasGarage === true || building.hasGarage === 'true' || building.hasGarage === 'yes',
       has_pool: building.hasSwimmingPool === true || building.hasSwimmingPool === 'true' || building.hasSwimmingPool === 'yes',
+      hasElevator: building.hasElevator === true || building.hasElevator === 'true' || building.hasElevator === 'yes',
+      has_elevator: building.hasElevator === true || building.hasElevator === 'true' || building.hasElevator === 'yes',
       has_shared_parts_with_other_buildings: building.sharedParts?.trim() && building.sharedParts.trim().toLowerCase() !== 'none',
       description: building.description?.trim(),
       agent: agent._id,
@@ -147,12 +153,118 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
     const newBuilding = new Building(buildingData);
     await newBuilding.save({ session });
 
+    // --- Shared-title linking logic (for multiple-apartment flow) ---
+    try {
+      const referencedPlan = building.sharedWithTitleDeed?.trim() || building.shared_with_title_deed?.trim();
+
+      if (referencedPlan) {
+        const existingSharedBuilding = await Building.findOne({
+          propertyPlanNumber: referencedPlan,
+          _id: { $ne: newBuilding._id }
+        }).session(session);
+
+        if (existingSharedBuilding) {
+          await Building.findByIdAndUpdate(newBuilding._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: referencedPlan
+          }, { session });
+
+          await Building.findByIdAndUpdate(existingSharedBuilding._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: newBuilding.propertyPlanNumber || building.propertyPlanNumber?.trim()
+          }, { session });
+        } else {
+          await Building.findByIdAndUpdate(newBuilding._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: referencedPlan
+          }, { session });
+        }
+      }
+
+      if (newBuilding.propertyPlanNumber) {
+        const pendingBuildings = await Building.find({
+          sharedWithTitleDeed: newBuilding.propertyPlanNumber,
+          hasSharedParts: true,
+          _id: { $ne: newBuilding._id }
+        }).session(session);
+
+        for (const pending of pendingBuildings) {
+          await Building.findByIdAndUpdate(pending._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: pending.propertyPlanNumber
+          }, { session });
+
+          await Building.findByIdAndUpdate(newBuilding._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: pending.propertyPlanNumber
+          }, { session });
+        }
+      }
+    } catch (linkErr) {
+      console.warn('Warning: shared-title linking failed:', linkErr.message || linkErr);
+    }
+
+    // --- Shared-title linking logic ---
+    try {
+      const referencedPlan = building.sharedWithTitleDeed?.trim() || building.shared_with_title_deed?.trim();
+
+      if (referencedPlan) {
+        // If target exists, link both ways. Otherwise save unconfirmed link on this building.
+        const existingSharedBuilding = await Building.findOne({
+          propertyPlanNumber: referencedPlan,
+          _id: { $ne: newBuilding._id }
+        }).session(session);
+
+        if (existingSharedBuilding) {
+          await Building.findByIdAndUpdate(newBuilding._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: referencedPlan
+          }, { session });
+
+          await Building.findByIdAndUpdate(existingSharedBuilding._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: newBuilding.propertyPlanNumber || building.propertyPlanNumber?.trim()
+          }, { session });
+        } else {
+          await Building.findByIdAndUpdate(newBuilding._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: referencedPlan
+          }, { session });
+        }
+      }
+
+      // Also check if any existing building previously referenced THIS building's plan
+      if (newBuilding.propertyPlanNumber) {
+        const pendingBuildings = await Building.find({
+          sharedWithTitleDeed: newBuilding.propertyPlanNumber,
+          hasSharedParts: true,
+          _id: { $ne: newBuilding._id }
+        }).session(session);
+
+        for (const pending of pendingBuildings) {
+          // Ensure mutual link
+          await Building.findByIdAndUpdate(pending._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: pending.propertyPlanNumber
+          }, { session });
+
+          await Building.findByIdAndUpdate(newBuilding._id, {
+            hasSharedParts: true,
+            sharedWithTitleDeed: pending.propertyPlanNumber
+          }, { session });
+        }
+      }
+    } catch (linkErr) {
+      // Don't fail the whole transaction for linking issues; log and continue
+      console.warn('Warning: shared-title linking failed:', linkErr.message || linkErr);
+    }
+
     // 3️⃣ Create apartment with correct field mapping
     const apartmentData = {
       unit_code: apartment.apartment_number?.trim(),
       unit_description: apartment.ownership_status?.trim(),
       registration_number: apartment.main_plot_number?.trim(),
-      division_number: apartment.plot_number?.trim(), // Using plot_number as division_number
+      division_number: apartment.main_plot_number?.trim(),
       
       area_sqm: apartment.space ? parseFloat(apartment.space) : undefined,
       floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
@@ -313,17 +425,18 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
     const buildingData = {
       // Map your frontend building fields to your Building schema fields
       building_name: building.name?.trim(),
-      building_code: building.residenceCode?.trim(),
       building_address: building.address?.trim(),
-      residenceCode: building.residenceCode?.trim(),
       land_area_sqm: building.propertyLandArea ? parseFloat(building.propertyLandArea) : undefined,
       number_of_blocks: building.numberOfBuildings ? parseInt(building.numberOfBuildings, 10) : undefined,
       avg_units_per_block: building.averageUnitsPerBuilding ? parseInt(building.averageUnitsPerBuilding, 10) : undefined,
       avg_floors_per_block: building.averageFloorsPerBuilding ? parseInt(building.averageFloorsPerBuilding, 10) : undefined,
       total_units: building.totalUnits ? parseInt(building.totalUnits, 10) : undefined,
       original_title_number: building.propertyPlanNumber?.trim(),
+      propertyPlanNumber: building.propertyPlanNumber?.trim(),
       has_garage: building.hasGarage === true || building.hasGarage === 'true' || building.hasGarage === 'yes',
       has_pool: building.hasSwimmingPool === true || building.hasSwimmingPool === 'true' || building.hasSwimmingPool === 'yes',
+      hasElevator: building.hasElevator === true || building.hasElevator === 'true' || building.hasElevator === 'yes',
+      has_elevator: building.hasElevator === true || building.hasElevator === 'true' || building.hasElevator === 'yes',
       has_shared_parts_with_other_buildings: building.sharedParts?.trim() && building.sharedParts.trim().toLowerCase() !== 'none',
       description: building.description?.trim(),
       agent: agent._id,
@@ -343,13 +456,19 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         throw new Error("Each apartment must have details and at least one owner");
       }
 
+      // Require main_plot_number for each apartment
+      if (!aptDetails.main_plot_number || !aptDetails.main_plot_number.trim()) {
+        throw new Error("Each apartment must include 'main_plot_number' (canonical plot identifier)");
+      }
+
       // 3.1 Create Apartment
       const apartmentData = {
         // Map your frontend apartment fields to your Apartment schema fields
         unit_code: aptDetails.apartment_number?.trim(),
         unit_description: aptDetails.ownership_status?.trim(),
+        // Require canonical main_plot_number and store it
         registration_number: aptDetails.main_plot_number?.trim(),
-        division_number: aptDetails.plot_number?.trim(),
+        division_number: aptDetails.main_plot_number?.trim(),
         area_sqm: aptDetails.space ? parseFloat(aptDetails.space) : undefined,
         floor: aptDetails.floor ? parseInt(aptDetails.floor, 10) : undefined,
         usage_type: aptDetails.type?.trim() || 'residential',
