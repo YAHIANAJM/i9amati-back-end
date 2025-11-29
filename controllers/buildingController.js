@@ -22,7 +22,7 @@ export const getBuildings = async (req, res) => {
 
     const [buildings, totalCount] = await Promise.all([
       Building.find()
-        .select('name address propertyLandArea averageUnitsPerBuilding averageFloorsPerBuilding propertyPlanNumber hasGarage hasSwimmingPool hasSharedParts sharedWithTitleDeed sharedParts estateFeeNumber totalUnits numberOfBuildings createdAt building_code building_name building_address land_area_sqm number_of_blocks avg_units_per_block avg_floors_per_block original_title_number has_pool has_shared_parts_with_other_buildings documents description')
+        .select('building_code building_name building_address land_area_sqm avg_units_per_block avg_floors_per_block propertyPlanNumber original_title_number has_garage has_pool hasElevator has_elevator hasSharedParts has_shared_parts_with_other_buildings sharedWithTitleDeed sharedParts total_units number_of_blocks documents description agent apartments createdAt updatedAt')
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
@@ -30,24 +30,46 @@ export const getBuildings = async (req, res) => {
       Building.countDocuments()
     ]);
 
-    // Ensure all expected fields are present in the response
-    const fieldsToEnsure = [
-      'propertyLandArea', 'averageUnitsPerBuilding', 'averageFloorsPerBuilding',
-      'propertyPlanNumber', 'hasGarage', 'hasSwimmingPool', 'sharedParts',
-      'totalUnits', 'numberOfBuildings'
-    ];
+    // Map DB fields to API-friendly keys and remove duplicates
+    const normalizedBuildings = buildings.map(b => ({
+      _id: b._id,
+      building_code: b.building_code || null,
+      building_name: b.building_name || null,
+      building_address: b.building_address || null,
 
-    const normalizedBuildings = buildings.map(building => {
-      const normalized = { ...building };
-      fieldsToEnsure.forEach(field => {
-        if (!(field in normalized)) {
-          normalized[field] = null;
-        }
-      });
-      return normalized;
-    });
+      // Frontend-friendly aliases
+      propertyLandArea: b.land_area_sqm ?? null,
+      averageUnitsPerBuilding: b.avg_units_per_block ?? null,
+      averageFloorsPerBuilding: b.avg_floors_per_block ?? null,
 
-    console.log(`Fetched ${buildings.length} buildings out of ${totalCount} total.`); 
+      // Title / plan
+      propertyPlanNumber: b.propertyPlanNumber || b.original_title_number || null,
+
+      // Features
+      hasGarage: Boolean(b.has_garage),
+      hasSwimmingPool: Boolean(b.has_pool),
+      hasElevator: Boolean(b.hasElevator || b.has_elevator),
+
+      // Shared parts linking
+      hasSharedParts: Boolean(b.hasSharedParts || b.has_shared_parts_with_other_buildings),
+      sharedWithTitleDeed: b.sharedWithTitleDeed ?? null,
+      sharedParts: b.sharedParts ?? null,
+
+      // Counts
+      totalUnits: b.total_units ?? null,
+      numberOfBuildings: b.number_of_blocks ?? null,
+
+      // Misc
+      documents: b.documents || [],
+      description: b.description || null,
+      agent: b.agent || null,
+      apartments: b.apartments || [],
+
+      createdAt: b.createdAt,
+      updatedAt: b.updatedAt
+    }));
+
+    console.log(`Fetched ${buildings.length} buildings out of ${totalCount} total.`);
 
     res.status(200).json({
       success: true,
@@ -78,10 +100,10 @@ export const getBuildings = async (req, res) => {
  */
 export const getBuildingById = async (req, res) => {
   try {
-    const { id } = req.params; // Changed from buildingId to id to match frontend
-    
-    const building = await Building.findById(id).lean();
-    
+    const { buildingId } = req.params;
+    console.log(buildingId);
+    const building = await Building.findById(buildingId).lean();
+
     if (!building) {
       return res.status(404).json({
         success: false,
@@ -130,6 +152,19 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       throw new Error("Apartment must include 'main_plot_number' (canonical plot identifier)");
     }
 
+    // Optional numeric fields from frontend for single apartment
+    if (apartment.division_number !== undefined && apartment.division_number !== null) {
+      const dn = Number(apartment.division_number);
+      if (!Number.isInteger(dn) || dn < 1) throw new Error("'division_number' must be an integer >= 1");
+      apartment.division_number = dn;
+    }
+
+    if (apartment.land_share_area !== undefined && apartment.land_share_area !== null) {
+      const la = Number(apartment.land_share_area);
+      if (Number.isNaN(la) || la < 0) throw new Error("'land_share_area' must be a number >= 0");
+      apartment.land_share_area = la;
+    }
+
     // 2️⃣ Create building with correct field mapping
     const buildingData = {
       building_name: building.name?.trim(),
@@ -140,7 +175,6 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       avg_floors_per_block: building.averageFloorsPerBuilding ? parseInt(building.averageFloorsPerBuilding, 10) : undefined,
       total_units: building.totalUnits ? parseInt(building.totalUnits, 10) : undefined,
       original_title_number: building.propertyPlanNumber?.trim(),
-      propertyPlanNumber: building.propertyPlanNumber?.trim(),
       has_garage: building.hasGarage === true || building.hasGarage === 'true' || building.hasGarage === 'yes',
       has_pool: building.hasSwimmingPool === true || building.hasSwimmingPool === 'true' || building.hasSwimmingPool === 'yes',
       hasElevator: building.hasElevator === true || building.hasElevator === 'true' || building.hasElevator === 'yes',
@@ -264,14 +298,16 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       unit_code: apartment.apartment_number?.trim(),
       unit_description: apartment.ownership_status?.trim(),
       registration_number: apartment.main_plot_number?.trim(),
-      division_number: apartment.main_plot_number?.trim(),
-      
+      // optional numeric division number
+      division_number: apartment.division_number !== undefined ? apartment.division_number : undefined,
+
       area_sqm: apartment.space ? parseFloat(apartment.space) : undefined,
       floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
       usage_type: apartment.type?.trim() || 'residential',
-      
+
       land_share_ratio: apartment.share_percentage ? `${apartment.share_percentage}%` : undefined,
-      
+      land_share_area: apartment.land_share_area !== undefined ? apartment.land_share_area : undefined,
+
       building: newBuilding._id,
       agent: agent._id,
       owners: [], // Will be populated below
@@ -423,7 +459,6 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
 
     // 2️⃣ Create building
     const buildingData = {
-      // Map your frontend building fields to your Building schema fields
       building_name: building.name?.trim(),
       building_address: building.address?.trim(),
       land_area_sqm: building.propertyLandArea ? parseFloat(building.propertyLandArea) : undefined,
@@ -433,14 +468,14 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
       total_units: building.totalUnits ? parseInt(building.totalUnits, 10) : undefined,
       original_title_number: building.propertyPlanNumber?.trim(),
       propertyPlanNumber: building.propertyPlanNumber?.trim(),
-      has_garage: building.hasGarage === true || building.hasGarage === 'true' || building.hasGarage === 'yes',
-      has_pool: building.hasSwimmingPool === true || building.hasSwimmingPool === 'true' || building.hasSwimmingPool === 'yes',
-      hasElevator: building.hasElevator === true || building.hasElevator === 'true' || building.hasElevator === 'yes',
-      has_elevator: building.hasElevator === true || building.hasElevator === 'true' || building.hasElevator === 'yes',
-      has_shared_parts_with_other_buildings: building.sharedParts?.trim() && building.sharedParts.trim().toLowerCase() !== 'none',
+      has_garage: Boolean(building.hasGarage),
+      has_pool: Boolean(building.hasSwimmingPool),
+      has_elevator: Boolean(building.hasElevator),
+      hasElevator: Boolean(building.hasElevator),
+      hasSharedParts: Boolean(building.hasSharedParts),
+      sharedWithTitleDeed: building.hasSharedParts ? (building.sharedWithTitleDeed?.trim() || null) : null,
       description: building.description?.trim(),
       agent: agent._id,
-      // Add other fields as per your schema
     };
 
     const newBuilding = new Building(buildingData);
@@ -448,7 +483,8 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
 
     // 3️⃣ Process each apartment and its owners
     const createdApartments = [];
-    const createdOwners = [];
+    const createdOwners = []; // Only for representative owners
+
     for (const aptObj of apartments) {
       const { apartment: aptDetails, owners: ownersList } = aptObj;
 
@@ -456,111 +492,130 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         throw new Error("Each apartment must have details and at least one owner");
       }
 
-      // Require main_plot_number for each apartment
       if (!aptDetails.main_plot_number || !aptDetails.main_plot_number.trim()) {
         throw new Error("Each apartment must include 'main_plot_number' (canonical plot identifier)");
       }
 
-      // 3.1 Create Apartment
+      if (aptDetails.division_number !== undefined && aptDetails.division_number !== null) {
+        const dn = Number(aptDetails.division_number);
+        if (!Number.isInteger(dn) || dn < 1) {
+          throw new Error("Each apartment.division_number must be an integer >= 1");
+        }
+        aptDetails.division_number = dn;
+      }
+
+      if (aptDetails.land_share_area !== undefined && aptDetails.land_share_area !== null) {
+        const la = Number(aptDetails.land_share_area);
+        if (Number.isNaN(la) || la < 0) {
+          throw new Error("Each apartment.land_share_area must be a number >= 0");
+        }
+        aptDetails.land_share_area = la;
+      }
+
+      // 3.1 Create Apartment (owners will be embedded objects)
       const apartmentData = {
-        // Map your frontend apartment fields to your Apartment schema fields
         unit_code: aptDetails.apartment_number?.trim(),
-        unit_description: aptDetails.ownership_status?.trim(),
-        // Require canonical main_plot_number and store it
-        registration_number: aptDetails.main_plot_number?.trim(),
-        division_number: aptDetails.main_plot_number?.trim(),
         area_sqm: aptDetails.space ? parseFloat(aptDetails.space) : undefined,
         floor: aptDetails.floor ? parseInt(aptDetails.floor, 10) : undefined,
         usage_type: aptDetails.type?.trim() || 'residential',
-        land_share_ratio: aptDetails.share_percentage ? `${aptDetails.share_percentage}%` : undefined,
+        registration_number: aptDetails.registration_number?.trim(),
+        division_number: aptDetails.division_number ? parseInt(aptDetails.division_number, 10) : undefined,
+        land_share_ratio: aptDetails.land_share_ratio?.trim() || undefined,
+        unit_description: aptDetails.ownership_status?.trim(),
+        main_plot_number: aptDetails.main_plot_number?.trim(),
+        percentage_of_apartment: aptDetails.percentage_of_apartment
+          ? parseFloat(aptDetails.percentage_of_apartment)
+          : undefined,
         building: newBuilding._id,
         agent: agent._id,
-        owners: [], // Will be populated with User IDs
-        ownerCredentials: [], // Will be populated with credential info
-        // Add other fields as per your schema
+        owners: [], // ← will hold embedded owner objects (not User refs)
+        ownerCredentials: [], // ← only rep login info (for agent)
       };
 
       const newApartment = new Apartment(apartmentData);
       await newApartment.save({ session });
 
-      // 3.2 Create Owners for this apartment
-      let representativeOwnerForThisApt = null;
-      for (const owner of ownersList) {
-        if (!owner.firstName || !owner.lastName || !owner.nationalId || !owner.email) {
-          throw new Error("Owner must have firstName, lastName, nationalId, and email");
+      // 3.2 Process owners: only rep becomes a User
+      let repIndex = -1;
+
+      // Find representative
+      for (let i = 0; i < ownersList.length; i++) {
+        if (ownersList[i].isRepresentative) {
+          repIndex = i;
+          break;
         }
+      }
 
-        const firstName = owner.firstName.trim();
-        const lastName = owner.lastName.trim();
+      // Fallback: use first owner as rep if none marked
+      if (repIndex === -1 && ownersList.length > 0) {
+        repIndex = 0;
+        ownersList[0] = { ...ownersList[0], isRepresentative: true };
+      }
+
+      // Embed all owners (including rep) as plain objects
+      const embeddedOwners = ownersList.map(owner => ({
+        firstName: owner.firstName?.trim() || '',
+        lastName: owner.lastName?.trim() || '',
+        nationalId: owner.nationalId?.trim() || '',
+        email: owner.email?.trim() || '',
+        phone: owner.phone?.trim() || '',
+        isRepresentative: !!owner.isRepresentative,
+      }));
+
+      // Create User only for the representative
+      let representativeUser = null;
+      if (repIndex !== -1) {
+        const repOwner = ownersList[repIndex];
+        const firstName = repOwner.firstName.trim();
+        const lastName = repOwner.lastName.trim();
         const fullName = `${firstName} ${lastName}`;
+        const nationalId = repOwner.nationalId.trim();
 
-        // Generate email
+        // Generate special email
         const emailLocal = `${apartmentData.unit_code.toLowerCase()}.${newBuilding.building_name.toLowerCase()}.${firstName.toLowerCase()}`
           .replace(/\s+/g, '')
           .replace(/[^a-z0-9.\-@]/g, '');
-        const email = `${emailLocal}@owner.com`;
+        const repEmail = `${emailLocal}@owner.com`;
 
-        // Check for existing email
-        const existingUser = await User.findOne({ email }).session(session);
-        if (existingUser) throw new Error(`Owner email already exists: ${email}`);
+        // Ensure email uniqueness
+        const existingUser = await User.findOne({ email: repEmail }).session(session);
+        if (existingUser) {
+          throw new Error(`Representative email already exists: ${repEmail}`);
+        }
 
-        // Hash the CIN as password
-        const hashedPassword = await bcrypt.hash(owner.nationalId?.trim(), 10);
-
+        const hashedPassword = await bcrypt.hash(nationalId, 10);
         const newUser = new User({
           name: fullName,
-          email: email,
-          password_hash: hashedPassword, // Store hashed CIN
-          nationalId: owner.nationalId?.trim(), // Store the national ID - THIS IS CRUCIAL
+          email: repEmail,
+          password_hash: hashedPassword,
+          nationalId: nationalId,
           role: "property_owner",
           status: "ACTIVE",
-          // Add other fields as per your User schema
         });
-
         await newUser.save({ session });
 
-        // Add to apartment's owners array
-        newApartment.owners.push(newUser._id);
-
-        // Add owner credentials for the agent to see (plaintext CIN)
-        newApartment.ownerCredentials.push({
-          owner: newUser._id,
-          email: newUser.email,
-          password: owner.nationalId?.trim() // Store plaintext CIN for agent view
-        });
-
-        // Check if this owner is the representative for *this* apartment
-        if (owner.isRepresentative) {
-          if (representativeOwnerForThisApt) {
-            console.warn(`Warning: Multiple representatives found for apartment ${apartmentData.unit_code}. Using the first one.`);
-          } else {
-            representativeOwnerForThisApt = newUser; // Mark the found representative
-          }
-        }
+        representativeUser = newUser;
 
         createdOwners.push({
           name: fullName,
-          email: newUser.email,
-          password: owner.nationalId?.trim(), // Only for the representative (or all if not filtered, but now filtered)
-          isRepresentative: owner.isRepresentative // Include flag in response if needed
+          email: repEmail,
+          password: nationalId,
+          isRepresentative: true,
         });
+
+        // Update embedded owner email to the auto-generated one
+        embeddedOwners[repIndex] = {
+          ...embeddedOwners[repIndex],
+          email: repEmail,
+        };
       }
 
-      // If no representative was explicitly marked for this apartment, default to the first owner
-      if (!representativeOwnerForThisApt && newApartment.owners.length > 0) {
-          const firstOwnerId = newApartment.owners[0];
-          const firstOwner = await User.findById(firstOwnerId).session(session);
-          newApartment.ownerCredentials.push({
-              owner: firstOwner._id,
-              email: firstOwner.email,
-              password: firstOwner.password_hash // Assuming password_hash is the plain password here too
-          });
-          representativeOwnerForThisApt = firstOwner;
-          // Update the first owner in createdOwners array if needed
-          const firstOwnerIndex = createdOwners.findIndex(o => o.email === firstOwner.email);
-          if (firstOwnerIndex !== -1) {
-              createdOwners[firstOwnerIndex].isRepresentative = true;
-          }
+      // Save embedded owners
+      newApartment.owners = embeddedOwners;
+
+      // Link rep User if exists
+      if (representativeUser) {
+        newApartment.representativeUser = representativeUser._id;
       }
 
       await newApartment.save({ session });
@@ -574,13 +629,6 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
       agent.apartments.push(newApartment._id);
       await agent.save({ session });
 
-      // 3.5 Create private group for this apartment (optional, you might want one per building)
-      // const groupName = `${newBuilding.building_name} - Apartment ${apartmentData.unit_code} Group`;
-      // const groupDescription = `Private discussion group for residents of ${newBuilding.building_name} - ${apartmentData.unit_code}`;
-      // const newGroup = new Group({ name: groupName, description: groupDescription, managers: [req.user.id], is_active: true });
-      // await newGroup.save({ session });
-      // await User.updateMany({ _id: { $in: newApartment.owners } }, { $push: { groups: newGroup._id } }, { session });
-
       createdApartments.push(newApartment);
     }
 
@@ -592,7 +640,6 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
       building: newBuilding,
       apartments: createdApartments,
       owners: createdOwners,
-      // group: { _id: newGroup._id, name: newGroup.name, description: newGroup.description } // If group was created per apartment
     });
 
   } catch (error) {
@@ -611,7 +658,7 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
 export const deleteBuilding = async (req, res) => {
   try {
     const { buildingId } = req.params;
-    
+
     // Get the authenticated user (who should be a union agent)
     const agent = await User.findById(req.user.id);
     if (!agent || agent.role !== 'union_agent') return res.status(404).json({ error: 'Agent user not found' });
@@ -645,16 +692,16 @@ export const deleteBuilding = async (req, res) => {
 
     // Remove references from agent user
     if (agent.apartments) {
-      agent.apartments = agent.apartments.filter(aid => 
+      agent.apartments = agent.apartments.filter(aid =>
         !aptIds.some(x => x.toString() === aid.toString())
       );
       await agent.save();
     }
 
-    res.json({ 
-      success: true, 
-      deletedApartments: aptIds.length, 
-      deletedUsers: userIds.length 
+    res.json({
+      success: true,
+      deletedApartments: aptIds.length,
+      deletedUsers: userIds.length
     });
 
   } catch (error) {

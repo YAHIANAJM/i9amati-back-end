@@ -24,8 +24,7 @@ export const getApartmentsByBuilding = async (req, res) => {
 
     // Get all apartments for this building
     const apartments = await Apartment.find({ building: buildingId })
-      .select('unit_code floor area_sqm usage_type building createdAt updatedAt')
-      .populate('building', 'building_name building_code')
+      .select('unit_code floor area_sqm unit_description registration_number division_number land_share_ratio percentage_of_apartment usage_type building createdAt updatedAt')      .populate('building', 'building_name building_code')
       .sort({ unit_code: 1 })
       .lean();
 
@@ -112,19 +111,38 @@ export const createApartmentForBuilding = async (req, res) => {
     if (!agent || agent.role !== 'union_agent') {
       return res.status(404).json({ error: 'Agent user not found' });
     }
+    // Validate optional incoming fields
+    if (apartment.division_number !== undefined && apartment.division_number !== null) {
+      const dn = Number(apartment.division_number);
+      if (!Number.isInteger(dn) || dn < 1) {
+        return res.status(400).json({ error: "'division_number' must be an integer >= 1" });
+      }
+      apartment.division_number = dn;
+    }
+
+    if (apartment.land_share_area !== undefined && apartment.land_share_area !== null) {
+      const la = Number(apartment.land_share_area);
+      if (Number.isNaN(la) || la < 0) {
+        return res.status(400).json({ error: "'land_share_area' must be a number >= 0" });
+      }
+      apartment.land_share_area = la;
+    }
 
     // Create apartment with correct field mapping
     const apartmentData = {
       unit_code: apartment.apartment_number?.trim(),
       unit_description: apartment.ownership_status?.trim(),
       registration_number: apartment.main_plot_number?.trim(),
-      division_number: apartment.main_plot_number?.trim(),
+      // optional numeric division number (prefer explicit field)
+      division_number: apartment.division_number !== undefined ? apartment.division_number : undefined,
       
       area_sqm: apartment.space ? parseFloat(apartment.space) : undefined,
       floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
       usage_type: apartment.type?.trim() || 'residential',
       
       land_share_ratio: apartment.share_percentage ? `${apartment.share_percentage}%` : undefined,
+      // optional numeric land share area
+      land_share_area: apartment.land_share_area !== undefined ? apartment.land_share_area : undefined,
       
       building: building._id,
       agent: agent._id,
