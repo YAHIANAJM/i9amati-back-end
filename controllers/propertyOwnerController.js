@@ -4,22 +4,22 @@
 import Apartment from '../models/Apartment.js';
 import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
-import crypto from 'crypto';
+import Building from '../models/Building.js';
 
 /**
  * GET /api/property-owners/:apartmentId/owners
  * Get all owners for a specific apartment
- * Returns FULL owner details including email and password_hash
+ * Returns owner details from the embedded owners array
  */
 export const getOwnersByApartment = async (req, res) => {
   try {
     const { apartmentId } = req.params;
 
     // Get apartment with building reference AND owners
+    // No need to populate 'owners' as they are embedded
     const apartment = await Apartment.findById(apartmentId)
-      .select('unit_code floor area_sqm building owners ownerCredentials')
+      .select('unit_code floor area_sqm building owners representativeUser')
       .populate('building', 'building_name building_address')
-      .populate('owners', 'name email nationalId status createdAt') // ← Get owner details
       .lean();
 
     if (!apartment) {
@@ -29,21 +29,21 @@ export const getOwnersByApartment = async (req, res) => {
       });
     }
 
-    // Add credential information to each owner
-    const ownersWithCredentials = apartment.owners.map(owner => {
-      const credential = apartment.ownerCredentials.find(cred => 
-        cred.owner.toString() === owner._id.toString()
-      );
-        return {
-          _id: owner._id,
-          name: owner.name,
-          email: owner.email,
-          status: owner.status,
-          createdAt: owner.createdAt,
-          nationalId: owner.nationalId || null,
-          password_hash: credential?.password || 'N/A'
-        };
-    });
+    // Map embedded owners to response format
+    const ownersList = apartment.owners || [];
+    const formattedOwners = ownersList.map(owner => ({
+      _id: owner._id,
+      name: `${owner.firstName} ${owner.lastName}`,
+      firstName: owner.firstName,
+      lastName: owner.lastName,
+      email: owner.email,
+      phone: owner.phone,
+      nationalId: owner.nationalId,
+      status: 'ACTIVE', // Placeholder as embedded owners don't have status
+      createdAt: apartment.createdAt, // Placeholder
+      password_hash: 'N/A',
+      isRepresentative: owner.isRepresentative
+    }));
 
     res.status(200).json({
       success: true,
@@ -54,8 +54,8 @@ export const getOwnersByApartment = async (req, res) => {
         area_sqm: apartment.area_sqm,
         building: apartment.building
       },
-      totalOwners: ownersWithCredentials?.length || 0,
-      data: ownersWithCredentials
+      totalOwners: formattedOwners.length,
+      data: formattedOwners
     });
 
   } catch (error) {
@@ -70,72 +70,58 @@ export const getOwnersByApartment = async (req, res) => {
 
 /**
  * POST /api/property-owners/createOwnerForApartment
- * Add owner to apartment
+ * Add owner to apartment (Embedded)
  */
 export const createOwnerForApartment = async (req, res) => {
   try {
     const { owner, apartmentId } = req.body;
-    
+
     if (!owner || !apartmentId) {
       return res.status(400).json({ error: 'Owner data and apartmentId required' });
     }
-    
+
     if (!owner.firstName || !owner.lastName || !owner.nationalId || !owner.email) {
       return res.status(400).json({ error: 'firstName, lastName, nationalId, and email are required' });
     }
-    
+
     // Get the authenticated agent
     const agent = await User.findById(req.user.id);
     if (!agent || agent.role !== 'union_agent') return res.status(404).json({ error: 'Agent not found' });
-    
+
     const apt = await Apartment.findOne({ _id: apartmentId, agent: agent._id });
     if (!apt) return res.status(404).json({ error: 'Apartment not found' });
 
-    // Get building for email generation
-    const building = await Building.findById(apt.building).select('building_name');
-    const buildingName = building?.building_name || 'building';
-
-    // Check if email already exists
-    const existingUser = await User.findOne({ email: owner.email });
-    if (existingUser) {
-      return res.status(409).json({ error: 'Owner email already exists' });
+    // Check if email already exists in this apartment's owners
+    const emailExists = apt.owners.some(o => o.email === owner.email);
+    if (emailExists) {
+      return res.status(409).json({ error: 'Owner email already exists in this apartment' });
     }
-    
-    // Hash the CIN as password
-    const hashedPassword = await bcrypt.hash(owner.nationalId, 10);
-    
-    const newUser = new User({ 
-      name: `${owner.firstName} ${owner.lastName}`,
-      email: owner.email, 
-      password_hash: hashedPassword, 
+
+    const newOwner = {
+      firstName: owner.firstName,
+      lastName: owner.lastName,
       nationalId: owner.nationalId,
-      role: 'property_owner', 
-      status: 'ACTIVE' 
-    });
-    await newUser.save();
-    
-    // Add to apartment's owners array
-    apt.owners.push(newUser._id);
-    
-    // Add owner credentials for agent view
-    apt.ownerCredentials.push({
-      owner: newUser._id,
       email: owner.email,
-      password: owner.nationalId // Store plaintext CIN for agent view
-    });
-    
+      phone: owner.phone,
+      isRepresentative: owner.isRepresentative || false
+    };
+
+    apt.owners.push(newOwner);
     await apt.save();
-    
-    res.status(201).json({ 
+
+    // Retrieve the added owner (it will have an _id now)
+    const addedOwner = apt.owners[apt.owners.length - 1];
+
+    res.status(201).json({
       success: true,
       message: 'Owner added successfully',
-      owner: { 
-        _id: newUser._id, 
-        name: newUser.name, 
-        email: newUser.email,
-        nationalId: newUser.nationalId,
-        isRepresentative: owner.isRepresentative || false
-      } 
+      owner: {
+        _id: addedOwner._id,
+        name: `${addedOwner.firstName} ${addedOwner.lastName}`,
+        email: addedOwner.email,
+        nationalId: addedOwner.nationalId,
+        isRepresentative: addedOwner.isRepresentative
+      }
     });
   } catch (error) {
     console.error('Error adding owner:', error);
@@ -150,24 +136,17 @@ export const createOwnerForApartment = async (req, res) => {
 export const removeOwnerFromApartment = async (req, res) => {
   try {
     const { apartmentId, ownerId } = req.params;
-    
-    // Get the authenticated agent
+
     const agent = await User.findById(req.user.id);
     if (!agent || agent.role !== 'union_agent') return res.status(404).json({ error: 'Agent not found' });
-    
+
     const apt = await Apartment.findOne({ _id: apartmentId, agent: agent._id });
     if (!apt) return res.status(404).json({ error: 'Apartment not found' });
-    
-    // Remove owner from apartment
-    apt.owners = apt.owners.filter(o => o.toString() !== ownerId);
-    apt.ownerCredentials = apt.ownerCredentials.filter(cred => 
-      cred.owner.toString() !== ownerId
-    );
+
+    // Remove embedded owner
+    apt.owners.pull({ _id: ownerId });
     await apt.save();
-    
-    // Delete the user
-    await User.findByIdAndDelete(ownerId);
-    
+
     res.json({ success: true, message: 'Owner removed successfully' });
   } catch (error) {
     console.error('Error removing owner:', error);
@@ -183,22 +162,33 @@ export const updateOwnerInfo = async (req, res) => {
   try {
     const { apartmentId, ownerId } = req.params;
     const updateData = req.body;
-    
-    // Get the authenticated agent
+
     const agent = await User.findById(req.user.id);
     if (!agent || agent.role !== 'union_agent') return res.status(404).json({ error: 'Agent not found' });
-    
+
     const apt = await Apartment.findOne({ _id: apartmentId, agent: agent._id });
     if (!apt) return res.status(404).json({ error: 'Apartment not found' });
-    
-    const user = await User.findByIdAndUpdate(
-      ownerId, 
-      updateData, 
-      { new: true, runValidators: true }
-    );
-    if (!user) return res.status(404).json({ error: 'Owner not found' });
-    
-    res.json({ success: true, owner: user });
+
+    const ownerSubdoc = apt.owners.id(ownerId);
+    if (!ownerSubdoc) return res.status(404).json({ error: 'Owner not found' });
+
+    if (updateData.firstName) ownerSubdoc.firstName = updateData.firstName;
+    if (updateData.lastName) ownerSubdoc.lastName = updateData.lastName;
+    if (updateData.email) ownerSubdoc.email = updateData.email;
+    if (updateData.phone) ownerSubdoc.phone = updateData.phone;
+    if (updateData.nationalId) ownerSubdoc.nationalId = updateData.nationalId;
+    if (updateData.isRepresentative !== undefined) ownerSubdoc.isRepresentative = updateData.isRepresentative;
+
+    await apt.save();
+
+    res.json({
+      success: true,
+      owner: {
+        _id: ownerSubdoc._id,
+        name: `${ownerSubdoc.firstName} ${ownerSubdoc.lastName}`,
+        ...updateData
+      }
+    });
   } catch (error) {
     console.error('Error updating owner:', error);
     res.status(500).json({ error: 'Failed to update owner' });
