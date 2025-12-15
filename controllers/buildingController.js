@@ -709,3 +709,193 @@ export const deleteBuilding = async (req, res) => {
     res.status(500).json({ error: 'Failed to delete building' });
   }
 };
+
+/**
+ * POST /api/buildings/:buildingId/apartments-with-owners
+ * Add a new apartment with owners to an EXISTING building
+ */
+export const addApartmentWithOwnersToBuilding = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { buildingId } = req.params;
+
+    // 1️⃣ Get the authenticated union agent user
+    const agent = await User.findById(req.user.id).session(session);
+    if (!agent || agent.role !== 'union_agent') {
+      throw new Error("Agent user not found or invalid role");
+    }
+
+    const { apartment, owners } = req.body;
+
+    if (!apartment || !Array.isArray(owners) || owners.length === 0) {
+      throw new Error("Apartment details and at least one owner are required");
+    }
+
+    // 2️⃣ Find the existing building
+    const building = await Building.findById(buildingId).session(session);
+    if (!building) {
+      throw new Error("Building not found");
+    }
+
+    // Enforce new plot identifier: require main_plot_number
+    if (!apartment.main_plot_number || !apartment.main_plot_number.trim()) {
+      throw new Error("Apartment must include 'main_plot_number' (canonical plot identifier)");
+    }
+
+    // Optional numeric fields from frontend
+    if (apartment.division_number !== undefined && apartment.division_number !== null) {
+      const dn = Number(apartment.division_number);
+      if (!Number.isInteger(dn) || dn < 1) throw new Error("'division_number' must be an integer >= 1");
+      apartment.division_number = dn;
+    }
+
+    if (apartment.land_share_area !== undefined && apartment.land_share_area !== null) {
+      const la = Number(apartment.land_share_area);
+      if (Number.isNaN(la) || la < 0) throw new Error("'land_share_area' must be a number >= 0");
+      apartment.land_share_area = la;
+    }
+
+    // 3️⃣ Create apartment linked to this building
+    const apartmentData = {
+      unit_code: apartment.apartment_number?.trim(),
+      unit_description: apartment.ownership_status?.trim(),
+      registration_number: apartment.main_plot_number?.trim(),
+      main_plot_number: apartment.main_plot_number?.trim(),
+      // optional numeric division number
+      division_number: apartment.division_number !== undefined ? apartment.division_number : undefined,
+
+      area_sqm: apartment.space ? parseFloat(apartment.space) : undefined,
+      floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
+      usage_type: apartment.type?.trim() || 'residential',
+
+      land_share_ratio: apartment.share_percentage ? `${apartment.share_percentage}%` : undefined,
+      land_share_area: apartment.land_share_area !== undefined ? apartment.land_share_area : undefined,
+
+      building: building._id,
+      agent: agent._id,
+      owners: [], // Will be populated below
+      ownerCredentials: [] // Will be populated below
+    };
+
+    const newApartment = new Apartment(apartmentData);
+    await newApartment.save({ session });
+
+    // 4️⃣ Create owners and link them correctly
+    const createdOwners = [];
+    const ownerUserIds = [];
+    let representativeOwner = null;
+
+    for (const owner of owners) {
+      if (!owner.firstName || !owner.lastName) continue;
+
+      const firstName = owner.firstName.trim();
+      const lastName = owner.lastName.trim();
+      const fullName = `${firstName} ${lastName}`;
+
+      const emailLocal = `${apartmentData.unit_code.toLowerCase()}.${building.building_name.toLowerCase()}.${firstName.toLowerCase()}`
+        .replace(/\s+/g, '')
+        .replace(/[^a-z0-9.\-@]/g, '');
+      const email = `${emailLocal}@owner.com`;
+
+      const existingUser = await User.findOne({ email }).session(session);
+      if (existingUser) throw new Error(`Owner email already exists: ${email}`);
+
+      // Hash the CIN as password
+      const hashedPassword = await bcrypt.hash(owner.nationalId?.trim(), 10);
+
+      const newUser = new User({
+        name: fullName,
+        email: email,
+        password_hash: hashedPassword, // Store hashed CIN
+        nationalId: owner.nationalId?.trim(),
+        role: "property_owner",
+        status: "ACTIVE"
+      });
+
+      await newUser.save({ session });
+
+      // Add to apartment's owners array
+      newApartment.owners.push(newUser._id);
+      ownerUserIds.push(newUser._id);
+
+      // Add owner credentials for the agent to see
+      newApartment.ownerCredentials.push({
+        owner: newUser._id,
+        email: newUser.email,
+        password: owner.nationalId?.trim() // Store plaintext CIN for agent view
+      });
+
+      // Check if this owner is the representative
+      if (owner.isRepresentative) {
+        if (representativeOwner) {
+          console.warn(`Warning: Multiple representatives found for apartment ${apartmentData.unit_code}. Using the first one.`);
+        } else {
+          representativeOwner = newUser;
+        }
+      }
+
+      createdOwners.push({
+        name: fullName,
+        email: newUser.email,
+        password: owner.nationalId?.trim(),
+        nationalId: owner.nationalId?.trim(),
+        isRepresentative: owner.isRepresentative
+      });
+    }
+
+    // If no representative was explicitly marked, default to the first owner
+    if (!representativeOwner && newApartment.owners.length > 0) {
+      const firstOwnerId = newApartment.owners[0];
+      const firstOwner = await User.findById(firstOwnerId).session(session);
+      const firstOwnerIndex = createdOwners.findIndex(o => o.email === firstOwner.email);
+      if (firstOwnerIndex !== -1) {
+        createdOwners[firstOwnerIndex].isRepresentative = true;
+      }
+    }
+
+    await newApartment.save({ session });
+
+    // 5️⃣ Link apartment to building
+    building.apartments.push(newApartment._id);
+    await building.save({ session });
+
+    // 6️⃣ Link apartment to agent user
+    if (!agent.apartments) agent.apartments = [];
+    agent.apartments.push(newApartment._id);
+    await agent.save({ session });
+
+    // 7️⃣ Add owners to the building's private group (if exists)
+    // Find the group associated with this building
+    // Note: In createBuilding logic, group name is `${building.building_name} - Private Group`
+    // We try to find it.
+    const groupName = `${building.building_name} - Private Group`;
+    const group = await Group.findOne({ name: groupName, managers: req.user.id }).session(session);
+
+    if (group) {
+      await User.updateMany(
+        { _id: { $in: ownerUserIds } },
+        { $push: { groups: group._id } },
+        { session }
+      );
+    } else {
+      console.warn(`Warning: Private group for building ${building.building_name} not found. Owners not added to group.`);
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(201).json({
+      message: 'Apartment and owners added to building successfully',
+      apartment: newApartment,
+      owners: createdOwners
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    console.error('Error in addApartmentWithOwnersToBuilding:', error);
+    res.status(500).json({ error: error.message || 'Failed to add apartment to building' });
+  }
+};

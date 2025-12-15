@@ -5,7 +5,8 @@ import {
   getBuildingById,
   createBuildingWithApartmentAndOwners,
   deleteBuilding,
-  createBuildingWithMultipleApartments
+  createBuildingWithMultipleApartments,
+  addApartmentWithOwnersToBuilding
 } from '../controllers/buildingController.js';
 
 const router = express.Router();
@@ -24,5 +25,8 @@ router.post('/createBuildingWithApartmentAndOwners', auth, requireRole('union_ag
 
 // Delete building and all its apartments
 router.delete('/:buildingId', auth, requireRole('union_agent'), deleteBuilding);
+
+// Add new apartment with owners to existing building
+router.post('/:buildingId/apartments-with-owners', auth, requireRole('union_agent'), addApartmentWithOwnersToBuilding);
 
 export default router;
