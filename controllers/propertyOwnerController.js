@@ -7,6 +7,31 @@ import bcrypt from 'bcryptjs';
 import Building from '../models/Building.js';
 
 /**
+ * GET /api/property-owners
+ * Get all property owners (for dropdowns, lists, etc.)
+ */
+export const getAllOwners = async (req, res) => {
+  try {
+    const owners = await User.find({ role: 'property_owner', status: 'ACTIVE' })
+      .select('name email nationalId status')
+      .sort({ name: 1 });
+
+    res.status(200).json({
+      success: true,
+      count: owners.length,
+      owners
+    });
+  } catch (error) {
+    console.error('Error fetching owners:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve owners',
+      error: error.message
+    });
+  }
+};
+
+/**
  * GET /api/property-owners/:apartmentId/owners
  * Get all owners for a specific apartment
  * Returns owner details from the embedded owners array

@@ -4,12 +4,16 @@
 import express from 'express';
 import { auth, requireRole } from '../middleware/auth.js';
 import {
+  getAllOwners,
   getOwnersByApartment,
   removeOwnerFromApartment,
   updateOwnerInfo
 } from '../controllers/propertyOwnerController.js';
 
 const router = express.Router();
+
+// Get all property owners
+router.get('/', getAllOwners);
 
 // Property owner gets their own apartment
 //router.get('/apartment', auth, requireRole('property_owner'), getOwnerApartment);

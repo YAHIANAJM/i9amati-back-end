@@ -13,14 +13,11 @@ import communityFeedRoutes from "./routes/communityFeed.js";
 import apartementRoutes from "./routes/Apartement.js";
 import propertyOwnerRoutes from "./routes/Propertyowner.js";
 import builldingRoutes from "./routes/Building.js";
+import accountingRoutes from "./routes/accountingNew.js";
 //testing
 dotenv.config(); // Load environment variables
 
-console.log(process.env.MONGO_URI);
-
 const app = express();
-
-console.log("Environment Variables:", process.env);
 
 app.use(
   cors({
@@ -47,6 +44,7 @@ app.use("/api/community", communityFeedRoutes);
 app.use("/api/apartments", apartementRoutes);
 app.use("/api/property-owners", propertyOwnerRoutes);
 app.use("/api/buildings", builldingRoutes);
+app.use("/api/accounting", accountingRoutes);
 
 // Logging middleware
 app.use((req, res, next) => {
