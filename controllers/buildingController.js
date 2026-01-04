@@ -30,6 +30,8 @@ export const getBuildings = async (req, res) => {
       Building.countDocuments()
     ]);
 
+    console.log(buildings);
+
     // Map DB fields to API-friendly keys and remove duplicates
     const normalizedBuildings = buildings.map(b => ({
       _id: b._id,
