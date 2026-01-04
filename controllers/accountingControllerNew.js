@@ -78,6 +78,8 @@ export const generateAnnualContributions = async (req, res) => {
       });
     }
 
+    console.log(`✅ Processing ${apartments.length} apartments for contribution generation`);
+
     // Get accounts
     const account3421 = await Account.findOne({ number: '3421' });
     const account7111 = await Account.findOne({ number: '7111' });
