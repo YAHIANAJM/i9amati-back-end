@@ -774,115 +774,114 @@ export const addApartmentWithOwnersToBuilding = async (req, res) => {
 
       land_share_ratio: apartment.share_percentage ? `${apartment.share_percentage}%` : undefined,
       land_share_area: apartment.land_share_area !== undefined ? apartment.land_share_area : undefined,
+      percentage_of_apartment: apartment.percentage_of_apartment ? parseFloat(apartment.percentage_of_apartment) : undefined,
 
       building: building._id,
       agent: agent._id,
-      owners: [], // Will be populated below
-      ownerCredentials: [] // Will be populated below
+      owners: [], // We will set this to embeddedOwners array
     };
 
     const newApartment = new Apartment(apartmentData);
-    await newApartment.save({ session });
+    // Don't save yet, we need to populate owners
 
-    // 4️⃣ Create owners and link them correctly
-    const createdOwners = [];
-    const ownerUserIds = [];
-    let representativeOwner = null;
+    // 4️⃣ Process owners
+    const createdCredentials = [];
+    let representativeUser = null;
+    let repIndex = -1;
 
-    for (const owner of owners) {
-      if (!owner.firstName || !owner.lastName) continue;
+    // Identify representative
+    for (let i = 0; i < owners.length; i++) {
+      if (owners[i].isRepresentative) {
+        repIndex = i;
+        break;
+      }
+    }
+    // Default to first if none marked
+    if (repIndex === -1 && owners.length > 0) {
+      repIndex = 0;
+      owners[0].isRepresentative = true;
+    }
 
-      const firstName = owner.firstName.trim();
-      const lastName = owner.lastName.trim();
+    // Map to embedded structure
+    const embeddedOwners = owners.map(owner => ({
+      firstName: owner.firstName?.trim() || '',
+      lastName: owner.lastName?.trim() || '',
+      nationalId: owner.nationalId?.trim() || '',
+      email: owner.email?.trim() || '',
+      phone: owner.phone?.trim() || '',
+      isRepresentative: !!owner.isRepresentative,
+    }));
+
+    // Process Representative User Creation
+    if (repIndex !== -1) {
+      const repOwner = owners[repIndex];
+      const firstName = repOwner.firstName.trim();
+      const lastName = repOwner.lastName.trim();
       const fullName = `${firstName} ${lastName}`;
+      const nationalId = repOwner.nationalId.trim();
 
+      // Generate special email
       const emailLocal = `${apartmentData.unit_code.toLowerCase()}.${building.building_name.toLowerCase()}.${firstName.toLowerCase()}`
         .replace(/\s+/g, '')
         .replace(/[^a-z0-9.\-@]/g, '');
-      const email = `${emailLocal}@owner.com`;
+      const repEmail = `${emailLocal}@owner.com`;
 
-      const existingUser = await User.findOne({ email }).session(session);
-      if (existingUser) throw new Error(`Owner email already exists: ${email}`);
+      // Check uniqueness
+      const existingUser = await User.findOne({ email: repEmail }).session(session);
+      if (existingUser) {
+        throw new Error(`Representative email already exists: ${repEmail}`);
+      }
 
-      // Hash the CIN as password
-      const hashedPassword = await bcrypt.hash(owner.nationalId?.trim(), 10);
-
+      const hashedPassword = await bcrypt.hash(nationalId, 10);
       const newUser = new User({
         name: fullName,
-        email: email,
-        password_hash: hashedPassword, // Store hashed CIN
-        nationalId: owner.nationalId?.trim(),
+        email: repEmail,
+        password_hash: hashedPassword,
+        nationalId: nationalId,
         role: "property_owner",
         status: "ACTIVE"
       });
-
       await newUser.save({ session });
+      representativeUser = newUser;
 
-      // Add to apartment's owners array
-      newApartment.owners.push(newUser._id);
-      ownerUserIds.push(newUser._id);
+      // Update embedded email matched for Rep to be the generated system email
+      embeddedOwners[repIndex].email = repEmail;
 
-      // Add owner credentials for the agent to see
-      newApartment.ownerCredentials.push({
-        owner: newUser._id,
-        email: newUser.email,
-        password: owner.nationalId?.trim() // Store plaintext CIN for agent view
-      });
-
-      // Check if this owner is the representative
-      if (owner.isRepresentative) {
-        if (representativeOwner) {
-          console.warn(`Warning: Multiple representatives found for apartment ${apartmentData.unit_code}. Using the first one.`);
-        } else {
-          representativeOwner = newUser;
-        }
-      }
-
-      createdOwners.push({
+      // Save credentials to return to API caller (Agent)
+      createdCredentials.push({
         name: fullName,
-        email: newUser.email,
-        password: owner.nationalId?.trim(),
-        nationalId: owner.nationalId?.trim(),
-        isRepresentative: owner.isRepresentative
+        email: repEmail,
+        password: nationalId,
+        isRepresentative: true
       });
     }
 
-    // If no representative was explicitly marked, default to the first owner
-    if (!representativeOwner && newApartment.owners.length > 0) {
-      const firstOwnerId = newApartment.owners[0];
-      const firstOwner = await User.findById(firstOwnerId).session(session);
-      const firstOwnerIndex = createdOwners.findIndex(o => o.email === firstOwner.email);
-      if (firstOwnerIndex !== -1) {
-        createdOwners[firstOwnerIndex].isRepresentative = true;
-      }
+    // Save embedded owners and rep reference
+    newApartment.owners = embeddedOwners;
+    if (representativeUser) {
+      newApartment.representativeUser = representativeUser._id;
     }
-
     await newApartment.save({ session });
 
-    // 5️⃣ Link apartment to building
+    // 5️⃣ Link apartment to building and agent
     building.apartments.push(newApartment._id);
     await building.save({ session });
 
-    // 6️⃣ Link apartment to agent user
     if (!agent.apartments) agent.apartments = [];
     agent.apartments.push(newApartment._id);
     await agent.save({ session });
 
-    // 7️⃣ Add owners to the building's private group (if exists)
-    // Find the group associated with this building
-    // Note: In createBuilding logic, group name is `${building.building_name} - Private Group`
-    // We try to find it.
+    // 6️⃣ Add Representative to Group (if exists)
     const groupName = `${building.building_name} - Private Group`;
     const group = await Group.findOne({ name: groupName, managers: req.user.id }).session(session);
 
-    if (group) {
-      await User.updateMany(
-        { _id: { $in: ownerUserIds } },
+    if (group && representativeUser) {
+      await User.findByIdAndUpdate(representativeUser._id,
         { $push: { groups: group._id } },
         { session }
       );
-    } else {
-      console.warn(`Warning: Private group for building ${building.building_name} not found. Owners not added to group.`);
+    } else if (!group) {
+      console.warn(`Warning: Private group for building ${building.building_name} not found. Rep not added to group.`);
     }
 
     await session.commitTransaction();
@@ -891,7 +890,7 @@ export const addApartmentWithOwnersToBuilding = async (req, res) => {
     res.status(201).json({
       message: 'Apartment and owners added to building successfully',
       apartment: newApartment,
-      owners: createdOwners
+      owners: createdCredentials, // Return credentials for the rep
     });
 
   } catch (error) {
