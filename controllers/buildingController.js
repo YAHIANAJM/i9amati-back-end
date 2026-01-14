@@ -674,25 +674,33 @@ export const deleteBuilding = async (req, res) => {
     const apartments = await Apartment.find({ building: buildingId });
     const aptIds = apartments.map(a => a._id);
 
-    // Collect owner ids
-    const userIds = [];
-    for (const a of apartments) {
-      if (Array.isArray(a.owners)) userIds.push(...a.owners.map(x => x.toString()));
-    }
+    // 1. Find all users who own ANY of these apartments
+    // (This ensures we catch everyone linked to this building)
+    const usersInBuilding = await User.find({ apartments: { $in: aptIds } });
 
-    // Remove apartments
+    // 2. Remove apartments
     await Apartment.deleteMany({ _id: { $in: aptIds } });
 
-    // Remove users
-    if (userIds.length > 0) {
-      const uniqueUserIds = [...new Set(userIds)];
-      await User.deleteMany({ _id: { $in: uniqueUserIds } });
-    }
-
-    // Remove building
+    // 3. Remove building
     await Building.findByIdAndDelete(buildingId);
 
-    // Remove references from agent user
+    // 4. Update Owners (Orphan Check)
+    let deletedUsersCount = 0;
+
+    for (const user of usersInBuilding) {
+      // Remove the deleted apartments from their list
+      user.apartments = user.apartments.filter(id => !aptIds.some(aptId => aptId.toString() === id.toString()));
+      await user.save();
+
+      // Check if they are now an orphan
+      if (user.apartments.length === 0 && user.role === 'property_owner') {
+        console.log(`User ${user._id} (${user.email}) is now an orphan after building delete. Deleting...`);
+        await User.findByIdAndDelete(user._id);
+        deletedUsersCount++;
+      }
+    }
+
+    // 5. Remove references from agent user
     if (agent.apartments) {
       agent.apartments = agent.apartments.filter(aid =>
         !aptIds.some(x => x.toString() === aid.toString())
@@ -703,7 +711,7 @@ export const deleteBuilding = async (req, res) => {
     res.json({
       success: true,
       deletedApartments: aptIds.length,
-      deletedUsers: userIds.length
+      deletedUsers: deletedUsersCount
     });
 
   } catch (error) {

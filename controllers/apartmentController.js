@@ -24,7 +24,7 @@ export const getApartmentsByBuilding = async (req, res) => {
 
     // Get all apartments for this building
     const apartments = await Apartment.find({ building: buildingId })
-      .select('unit_code floor area_sqm unit_description registration_number division_number land_share_ratio percentage_of_apartment usage_type building createdAt updatedAt')      .populate('building', 'building_name building_code')
+      .select('unit_code floor area_sqm unit_description registration_number division_number land_share_ratio percentage_of_apartment usage_type building createdAt updatedAt').populate('building', 'building_name building_code')
       .sort({ unit_code: 1 })
       .lean();
 
@@ -135,15 +135,15 @@ export const createApartmentForBuilding = async (req, res) => {
       registration_number: apartment.main_plot_number?.trim(),
       // optional numeric division number (prefer explicit field)
       division_number: apartment.division_number !== undefined ? apartment.division_number : undefined,
-      
+
       area_sqm: apartment.space ? parseFloat(apartment.space) : undefined,
       floor: apartment.floor ? parseInt(apartment.floor, 10) : undefined,
       usage_type: apartment.type?.trim() || 'residential',
-      
+
       land_share_ratio: apartment.share_percentage ? `${apartment.share_percentage}%` : undefined,
       // optional numeric land share area
       land_share_area: apartment.land_share_area !== undefined ? apartment.land_share_area : undefined,
-      
+
       building: building._id,
       agent: agent._id,
       owners: [], // Empty initially
@@ -186,7 +186,7 @@ export const createApartmentForBuilding = async (req, res) => {
 export const deleteApartment = async (req, res) => {
   try {
     const { apartmentId } = req.params;
-    
+
     // Get the authenticated agent
     const agent = await User.findById(req.user.id);
     if (!agent || agent.role !== 'union_agent') return res.status(404).json({ error: 'Agent user not found' });
@@ -194,11 +194,11 @@ export const deleteApartment = async (req, res) => {
     console.log('Attempting to delete apartment:', apartmentId, 'for agent:', agent._id);
 
     // Find apartment by ID and ensure it belongs to this agent
-    const apt = await Apartment.findOneAndDelete({ 
-      _id: apartmentId, 
-      agent: agent._id 
+    const apt = await Apartment.findOneAndDelete({
+      _id: apartmentId,
+      agent: agent._id
     });
-    
+
     if (!apt) return res.status(404).json({ error: 'Apartment not found' });
 
     // Remove from building
@@ -213,15 +213,28 @@ export const deleteApartment = async (req, res) => {
       $pull: { apartments: apartmentId }
     });
 
-    // Handle owners
-    const shouldDeleteUsers = req.query.deleteUsers === 'true' || req.body?.deleteUsers === true;
-    const userIds = [...(apt.owners || [])];
-    
-    if (userIds.length > 0) {
-      if (shouldDeleteUsers) {
-        await User.deleteMany({ _id: { $in: userIds } });
-      } else {
-        await User.updateMany({ _id: { $in: userIds } }, { $unset: { apartments: 1 } });
+    // Handle owners (Orphan Check)
+    const ownerIds = apt.owners || []; // These are embedded objects? No, schema says embedded objects but they might be ref'd in User model
+    // Wait, Apartment schema has `owners` as embedded objects, but also `representativeUser` as ID.
+    // However, create logic pushes User IDs to `newApartment.owners`? 
+    // Let's check schema again. Apartment.js: owners: [{...}] (embedded).
+    // BUT in createBuildingWithApartmentAndOwners: newApartment.owners.push(newUser._id);
+    // There is a mismatch. The schema defines `owners` as array of objects, but the controller pushes ObjectIds.
+    // Mongoose might cast ObjectId to string if the schema is mixed, or fail. 
+    // Let's rely on finding Users who have this apartment in their `apartments` list.
+
+    // Better approach: Find all users who have this apartment in their list
+    const usersWithThisApt = await User.find({ apartments: apartmentId });
+
+    for (const user of usersWithThisApt) {
+      // 1. Remove the apartment from their list
+      user.apartments = user.apartments.filter(id => id.toString() !== apartmentId.toString());
+      await user.save();
+
+      // 2. Check if they are now an orphan (no apartments left) AND are a property owner
+      if (user.apartments.length === 0 && user.role === 'property_owner') {
+        console.log(`User ${user._id} (${user.email}) is now an orphan. Deleting...`);
+        await User.findByIdAndDelete(user._id);
       }
     }
 
@@ -269,9 +282,9 @@ export const editApartment = async (req, res) => {
       updateData,
       { new: true, runValidators: true }
     );
-    
+
     if (!apt) return res.status(404).json({ error: 'Apartment not found' });
-    
+
     res.json({ success: true, apartment: apt });
   } catch (error) {
     console.error('Error editing apartment:', error);

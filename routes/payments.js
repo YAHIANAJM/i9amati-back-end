@@ -11,15 +11,22 @@ router.get('/', auth, async (req, res) => {
   let query = {};
 
   if (role === 'union_agent') {
-    const agent = await UnionAgent.findOne({ user: req.user.id });
+    // Use User model directly
+    const agent = await User.findById(req.user.id);
     if (!agent) return res.json([]);
     query.apartment_id = { $in: agent.apartments };
   } else if (role === 'property_owner') {
     const user = await User.findById(req.user.id);
-    if (user?.apartment) {
-      query.$or = [{ owner_id: user._id }, { apartment_id: user.apartment }];
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Handle multiple apartments
+    if (user.apartments && user.apartments.length > 0) {
+      query.$or = [
+        { owner_id: user._id },
+        { apartment_id: { $in: user.apartments } }
+      ];
     } else {
-      query.owner_id = user?._id;
+      query.owner_id = user._id;
     }
   }
 

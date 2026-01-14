@@ -30,12 +30,47 @@ router.post("/login", async (req, res) => {
       process.env.JWT_SECRET || "secret",
       { expiresIn: "1d" }
     );
+
+    // Set HttpOnly cookie
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production', // true in production
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' for cross-site cookie in prod
+      maxAge: 24 * 60 * 60 * 1000 // 1 day
+    });
+
     // Return user info (excluding password_hash)
     const { password_hash, ...userData } = user.toObject();
     res.json({ token, user: userData });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
+});
+
+// Check Logged In User
+router.get("/me", async (req, res) => {
+  try {
+    const token = req.cookies.token;
+    if (!token) return res.status(401).json({ message: "Not authenticated" });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
+    const user = await User.findById(decoded.id).select("-password_hash");
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    res.json(user);
+  } catch (err) {
+    res.status(401).json({ message: "Invalid token" });
+  }
+});
+
+router.post("/logout", (req, res) => {
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+  });
+  res.json({ message: "Logged out successfully" });
 });
 
 // Example register route

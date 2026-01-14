@@ -5,10 +5,17 @@ import User from '../models/User.js';
 // JWT authentication middleware
 
 export const auth = async (req, res, next) => {
-  const token = req.headers.authorization?.split(' ')[1];
+  let token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
+
+  // Also check lowercase authorization just in case
+  if (!token && req.headers.authorization) {
+    token = req.headers.authorization.split(' ')[1];
+  }
+
   console.log('--- AUTH DEBUG ---');
+  console.log('Cookies:', req.cookies);
   console.log('Authorization header:', req.headers.authorization);
-  console.log('Extracted token:', token);
+  console.log('Extracted token:', token ? 'Found' : 'Missing');
   if (!token) {
     console.log('No token provided');
     return res.status(401).json({ error: 'No token' });

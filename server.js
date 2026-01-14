@@ -1,10 +1,11 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import cookieParser from "cookie-parser";
 import connectDB from "./db.js";
 import authRoutes from "./routes/auth.js";
 import unionAgentRoutes from "./routes/unionAgent.js";
-import registerRoutes from "./routes.js";
+
 import serviceRoutes from "./routes/service.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import alertsRoutes from "./routes/alerts.js";
@@ -19,9 +20,23 @@ dotenv.config(); // Load environment variables
 
 const app = express();
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://iqamati-frontend.vercel.app", // Guessing production URL, user can update
+  "https://i9amati.vercel.app" // Guessing another
+];
+
 app.use(
   cors({
-    origin: "*", // Allow all origins - only for testing
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) !== -1 || origin.includes("localhost")) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
     optionsSuccessStatus: 200
   })
@@ -29,6 +44,9 @@ app.use(
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+app.use(cookieParser());
+
+
 
 
 
@@ -77,7 +95,7 @@ app.use((req, res, next) => {
 });
 
 // Register API routes
-registerRoutes(app);
+// registerRoutes(app);
 
 // Example route
 app.get("/", (req, res) => {
@@ -103,4 +121,6 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Backend server running on port ${PORT}`);
   console.log(`📡 API endpoints available at http://localhost:${PORT}/api`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
+
+
 });
