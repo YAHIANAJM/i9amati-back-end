@@ -21,10 +21,7 @@ dotenv.config(); // Load environment variables
 const app = express();
 
 const allowedOrigins = [
-  "http://localhost:5173",
-  "https://i9amati-front-eapn2ut2l-i9matis-projects.vercel.app", // Guessing production URL, user can update
-  "https://i9amati.vercel.app",
-   // Guessing another
+  process.env.FRONTEND_URL
 ];
 
 app.use(
