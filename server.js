@@ -50,19 +50,6 @@ app.use(cookieParser());
 
 connectDB();
 
-// Register API routes
-app.use("/api/auth", authRoutes);
-app.use("/api/union", unionAgentRoutes);
-app.use("/api/services", serviceRoutes);
-app.use("/api/dashboard", dashboardRoutes);
-app.use("/api/alerts", alertsRoutes);
-app.use("/api/payments", paymentsRoutes);
-app.use("/api/community", communityFeedRoutes);
-app.use("/api/apartments", apartementRoutes);
-app.use("/api/property-owners", propertyOwnerRoutes);
-app.use("/api/buildings", builldingRoutes);
-app.use("/api/accounting", accountingRoutes);
-
 // Logging middleware
 app.use((req, res, next) => {
   const start = Date.now();
@@ -91,6 +78,19 @@ app.use((req, res, next) => {
 
   next();
 });
+
+// Register API routes
+app.use("/api/auth", authRoutes);
+app.use("/api/union", unionAgentRoutes);
+app.use("/api/services", serviceRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/alerts", alertsRoutes);
+app.use("/api/payments", paymentsRoutes);
+app.use("/api/community", communityFeedRoutes);
+app.use("/api/apartments", apartementRoutes);
+app.use("/api/property-owners", propertyOwnerRoutes);
+app.use("/api/buildings", builldingRoutes);
+app.use("/api/accounting", accountingRoutes);
 
 // Register API routes
 // registerRoutes(app);
