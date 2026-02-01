@@ -15,6 +15,7 @@ class CMIPaymentService {
     this.callbackUrl = process.env.CMI_CALLBACK_URL || `${process.env.FRONTEND_URL}/payments/callback`;
     this.failUrl = process.env.CMI_FAIL_URL || `${process.env.FRONTEND_URL}/payments/failed`;
     this.okUrl = process.env.CMI_OK_URL || `${process.env.FRONTEND_URL}/payments/success`;
+    this.mockMode = process.env.CMI_MOCK_MODE === 'true';
   }
 
   /**
@@ -44,6 +45,24 @@ class CMIPaymentService {
       billToPostalCode,
       billToCountry = 'MA'
     } = paymentData;
+
+    // If in mock mode, return mock gateway URL
+    if (this.mockMode) {
+      const mockUrl = `${process.env.FRONTEND_URL}/mock-cmi`;
+      return {
+        gatewayUrl: mockUrl,
+        formData: {
+          oid: orderId,
+          amount: amount.toFixed(2),
+          currency,
+          email: customerEmail,
+          BillToName: billToName || customerName,
+          description: description || 'Payment for building services',
+          // Mock mode flag
+          mockMode: true
+        }
+      };
+    }
 
     const requestData = {
       clientid: this.merchantId,

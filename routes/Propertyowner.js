@@ -12,8 +12,8 @@ import {
 
 const router = express.Router();
 
-// Get all property owners
-router.get('/', getAllOwners);
+// Get all property owners (filtered by agent's building if union_agent)
+router.get('/', auth, getAllOwners);
 
 // Property owner gets their own apartment
 //router.get('/apartment', auth, requireRole('property_owner'), getOwnerApartment);

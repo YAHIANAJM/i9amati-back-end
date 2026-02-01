@@ -57,45 +57,42 @@ class PDFInvoiceService {
         doc.pipe(stream);
 
         // Header
-        doc.fontSize(20).font('Helvetica-Bold').text('فاتورة رسمية', { align: 'right' });
-        doc.fontSize(10).font('Helvetica').text('FACTURE OFFICIELLE', { align: 'right' });
+        doc.fontSize(20).font('Helvetica-Bold').text('RECEIPT / RECU', { align: 'center' });
         doc.moveDown();
 
         // Union Agent Info (Top Left)
-        doc.fontSize(10).font('Helvetica-Bold').text(unionAgent.name || 'اسم الوكيل', 50, 100);
+        doc.fontSize(10).font('Helvetica-Bold').text(unionAgent.name || 'Union Agent', 50, 100);
         doc.font('Helvetica').fontSize(9)
-          .text(unionAgent.address || 'العنوان')
-          .text(unionAgent.phone || 'الهاتف')
-          .text(unionAgent.email || 'البريد الإلكتروني')
-          .text(`ICE: ${unionAgent.ice || 'N/A'}`)
-          .text(`RC: ${unionAgent.rc || 'N/A'}`);
+          .text(unionAgent.address || 'Address')
+          .text(unionAgent.phone || 'Phone')
+          .text(unionAgent.email || 'Email');
 
         // Invoice Details (Top Right)
-        doc.fontSize(10).font('Helvetica-Bold').text(`رقم الفاتورة: ${invoiceNumber}`, 350, 100, { align: 'right' });
+        doc.fontSize(10).font('Helvetica-Bold').text(`Receipt Number: ${invoiceNumber}`, 350, 100, { align: 'right' });
         doc.font('Helvetica').fontSize(9)
-          .text(`التاريخ: ${new Date(invoiceDate).toLocaleDateString('ar-MA')}`, { align: 'right' })
-          .text(`تاريخ الاستحقاق: ${new Date(dueDate).toLocaleDateString('ar-MA')}`, { align: 'right' });
+          .text(`Date: ${new Date(invoiceDate).toLocaleDateString('en-US')}`, { align: 'right' })
+          .text(`Due Date: ${new Date(dueDate).toLocaleDateString('en-US')}`, { align: 'right' });
 
         doc.moveDown(2);
 
         // Customer Info
-        doc.fontSize(10).font('Helvetica-Bold').text('معلومات العميل:', 50, 220);
+        doc.fontSize(10).font('Helvetica-Bold').text('Customer Information:', 50, 220);
         doc.font('Helvetica').fontSize(9)
-          .text(`الاسم: ${customer.name}`)
-          .text(`العمارة: ${building.name}`)
-          .text(`الشقة: ${customer.apartmentNumber}`)
-          .text(`الهاتف: ${customer.phone || 'N/A'}`)
-          .text(`البريد: ${customer.email || 'N/A'}`);
+          .text(`Name: ${customer.name}`)
+          .text(`Building: ${building.name}`)
+          .text(`Apartment: ${customer.apartmentNumber}`)
+          .text(`Phone: ${customer.phone || 'N/A'}`)
+          .text(`Email: ${customer.email || 'N/A'}`);
 
         doc.moveDown(2);
 
         // Table Header
         const tableTop = 320;
         doc.fontSize(10).font('Helvetica-Bold');
-        doc.text('الوصف', 50, tableTop);
-        doc.text('الكمية', 250, tableTop);
-        doc.text('السعر', 350, tableTop);
-        doc.text('المجموع', 450, tableTop);
+        doc.text('Description', 50, tableTop);
+        doc.text('Quantity', 250, tableTop);
+        doc.text('Price', 350, tableTop);
+        doc.text('Total', 450, tableTop);
 
         // Draw line under header
         doc.moveTo(50, tableTop + 15).lineTo(550, tableTop + 15).stroke();
@@ -118,18 +115,18 @@ class PDFInvoiceService {
 
         // Totals
         doc.font('Helvetica-Bold');
-        doc.text('المجموع الفرعي:', 350, yPosition);
+        doc.text('Subtotal:', 350, yPosition);
         doc.text(`${subtotal.toFixed(2)} ${currency}`, 450, yPosition);
         yPosition += 20;
 
         if (tax && tax > 0) {
-          doc.text('الضريبة (TVA):', 350, yPosition);
+          doc.text('Tax (TVA):', 350, yPosition);
           doc.text(`${tax.toFixed(2)} ${currency}`, 450, yPosition);
           yPosition += 20;
         }
 
         doc.fontSize(12).font('Helvetica-Bold');
-        doc.text('المجموع الإجمالي:', 350, yPosition);
+        doc.text('Total:', 350, yPosition);
         doc.text(`${total.toFixed(2)} ${currency}`, 450, yPosition);
 
         yPosition += 40;
@@ -137,7 +134,7 @@ class PDFInvoiceService {
         // Payment Terms
         if (paymentTerms) {
           doc.fontSize(9).font('Helvetica-Bold');
-          doc.text('شروط الدفع:', 50, yPosition);
+          doc.text('Payment Terms:', 50, yPosition);
           doc.font('Helvetica').text(paymentTerms, 50, yPosition + 15);
           yPosition += 50;
         }
@@ -145,7 +142,7 @@ class PDFInvoiceService {
         // Notes
         if (notes) {
           doc.fontSize(9).font('Helvetica-Bold');
-          doc.text('ملاحظات:', 50, yPosition);
+          doc.text('Notes:', 50, yPosition);
           doc.font('Helvetica').text(notes, 50, yPosition + 15);
           yPosition += 50;
         }
@@ -210,7 +207,7 @@ class PDFInvoiceService {
         doc.pipe(stream);
 
         // Header
-        doc.fontSize(24).font('Helvetica-Bold').text('وصل دفع', { align: 'center' });
+        doc.fontSize(24).font('Helvetica-Bold').text('PAYMENT RECEIPT', { align: 'center' });
         doc.fontSize(12).font('Helvetica').text('REÇU DE PAIEMENT', { align: 'center' });
         doc.moveDown(2);
 
@@ -219,7 +216,7 @@ class PDFInvoiceService {
 
         // Receipt Number (Large and Centered)
         doc.fontSize(16).font('Helvetica-Bold')
-          .text(`رقم الوصل: ${receiptNumber}`, { align: 'center' });
+          .text(`Receipt Number: ${receiptNumber}`, { align: 'center' });
         doc.fontSize(10).font('Helvetica')
           .text(`Numéro de reçu: ${receiptNumber}`, { align: 'center' });
         doc.moveDown(2);
@@ -231,53 +228,53 @@ class PDFInvoiceService {
         doc.fontSize(11).font('Helvetica-Bold');
         
         // Date
-        doc.text('التاريخ:', 70, currentY);
-        doc.font('Helvetica').text(new Date(paymentDate).toLocaleDateString('ar-MA'), 200, currentY);
+        doc.text('Date:', 70, currentY);
+        doc.font('Helvetica').text(new Date(paymentDate).toLocaleDateString('en-US'), 200, currentY);
         currentY += 25;
 
         // Customer Name
-        doc.font('Helvetica-Bold').text('اسم العميل:', 70, currentY);
+        doc.font('Helvetica-Bold').text('Customer:', 70, currentY);
         doc.font('Helvetica').text(customer.name, 200, currentY);
         currentY += 25;
 
         // Building
-        doc.font('Helvetica-Bold').text('العمارة:', 70, currentY);
+        doc.font('Helvetica-Bold').text('Building:', 70, currentY);
         doc.font('Helvetica').text(building.name, 200, currentY);
         currentY += 25;
 
         // Apartment
-        doc.font('Helvetica-Bold').text('الشقة:', 70, currentY);
+        doc.font('Helvetica-Bold').text('Apartment:', 70, currentY);
         doc.font('Helvetica').text(customer.apartmentNumber, 200, currentY);
         currentY += 25;
 
         // Amount (Highlighted)
-        doc.fontSize(14).font('Helvetica-Bold').text('المبلغ المدفوع:', 70, currentY);
+        doc.fontSize(14).font('Helvetica-Bold').text('Amount Paid:', 70, currentY);
         doc.fillColor('green').fontSize(16).text(`${amount.toFixed(2)} ${currency}`, 200, currentY);
         doc.fillColor('black');
         currentY += 35;
 
         // Payment Method
-        doc.fontSize(11).font('Helvetica-Bold').text('طريقة الدفع:', 70, currentY);
+        doc.fontSize(11).font('Helvetica-Bold').text('Payment Method:', 70, currentY);
         doc.font('Helvetica').text(this.getPaymentMethodLabel(paymentMethod), 200, currentY);
         currentY += 25;
 
         // Payment Reference
         if (paymentReference) {
-          doc.font('Helvetica-Bold').text('المرجع:', 70, currentY);
+          doc.font('Helvetica-Bold').text('Reference:', 70, currentY);
           doc.font('Helvetica').text(paymentReference, 200, currentY);
           currentY += 25;
         }
 
         // Invoice Number
         if (invoiceNumber) {
-          doc.font('Helvetica-Bold').text('رقم الفاتورة:', 70, currentY);
+          doc.font('Helvetica-Bold').text('Invoice Number:', 70, currentY);
           doc.font('Helvetica').text(invoiceNumber, 200, currentY);
           currentY += 25;
         }
 
         // Journal Reference (Accounting)
         if (journalReference) {
-          doc.font('Helvetica-Bold').text('المرجع المحاسبي:', 70, currentY);
+          doc.font('Helvetica-Bold').text('Journal Ref:', 70, currentY);
           doc.font('Helvetica').text(journalReference, 200, currentY);
           currentY += 25;
         }
@@ -285,21 +282,21 @@ class PDFInvoiceService {
         // Union Agent Info (Bottom)
         currentY = 550;
         doc.fontSize(9).font('Helvetica-Bold');
-        doc.text('معلومات الوكيل:', 70, currentY);
+        doc.text('Union Agent Information:', 70, currentY);
         doc.font('Helvetica')
-          .text(unionAgent.name || 'اسم الوكيل')
-          .text(unionAgent.address || 'العنوان')
-          .text(unionAgent.phone || 'الهاتف');
+          .text(unionAgent.name || 'Union Agent')
+          .text(unionAgent.address || 'Address')
+          .text(unionAgent.phone || 'Phone');
 
         // Signature
         doc.fontSize(9).font('Helvetica-Bold');
-        doc.text('التوقيع والختم:', 350, currentY);
+        doc.text('Signature & Stamp:', 350, currentY);
         doc.moveTo(350, currentY + 40).lineTo(500, currentY + 40).stroke();
 
         // Footer
         doc.fontSize(7).font('Helvetica-Oblique');
-        doc.text('وصل دفع رسمي صادر عن نظام إقامتي', 50, 750, { align: 'center', width: 500 });
-        doc.text(`تاريخ الإصدار: ${new Date().toLocaleString('ar-MA')}`, { align: 'center' });
+        doc.text('Official payment receipt issued by Iqamati System', 50, 750, { align: 'center', width: 500 });
+        doc.text(`Issue Date: ${new Date().toLocaleString('en-US')}`, { align: 'center' });
 
         doc.end();
 
@@ -317,16 +314,18 @@ class PDFInvoiceService {
   }
 
   /**
-   * Get payment method label in Arabic
+   * Get payment method label in English
    */
   getPaymentMethodLabel(method) {
     const labels = {
-      'cash': 'نقداً',
-      'cheque': 'شيك',
-      'bank': 'تحويل بنكي',
-      'card': 'بطاقة',
-      'cmi': 'بوابة الدفع CMI',
-      'direct_debit': 'سحب أوتوماتيكي'
+      'cash': 'Cash',
+      'cheque': 'Cheque',
+      'bank': 'Bank Transfer',
+      'card': 'Card',
+      'cmi': 'CMI Payment Gateway',
+      'transfer': 'Transfer',
+      'auto_debit': 'Auto Debit',
+      'direct_debit': 'Direct Debit'
     };
     return labels[method] || method;
   }

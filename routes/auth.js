@@ -54,9 +54,17 @@ router.get("/me", async (req, res) => {
     if (!token) return res.status(401).json({ message: "Not authenticated" });
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
-    const user = await User.findById(decoded.id).select("-password_hash");
+    let user = await User.findById(decoded.id).select("-password_hash");
 
     if (!user) return res.status(404).json({ message: "User not found" });
+
+    // For union agents, find their building
+    if (user.role === 'union_agent') {
+      const Building = (await import('../models/Building.js')).default;
+      const building = await Building.findOne({ agent: user._id }).select('_id building_name building_code');
+      user = user.toObject();
+      user.building = building;
+    }
 
     res.json(user);
   } catch (err) {
