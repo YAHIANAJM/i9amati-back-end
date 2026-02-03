@@ -1,7 +1,6 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import fs from 'fs';
 import { auth } from '../middleware/auth.js';
 import Document from '../models/Document.js';
 import documentAccessControl from '../services/documentAccessControl.js';
@@ -9,26 +8,29 @@ import documentWorkflowService from '../services/documentWorkflowService.js';
 import documentVersioningService from '../services/documentVersioningService.js';
 import documentNotificationService from '../services/documentNotificationService.js';
 import documentController from '../controllers/documentController.js';
+import { v2 as cloudinary } from 'cloudinary';
+import crypto from 'crypto';
+import streamifier from 'streamifier';
 
 const router = express.Router();
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), 'storage', 'documents');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
-  }
-});
+// Configure Cloudinary
+const cloudinaryConfigured = 
+  process.env.CLOUDINARY_CLOUD_NAME && 
+  process.env.CLOUDINARY_API_KEY && 
+  process.env.CLOUDINARY_API_SECRET;
 
+if (cloudinaryConfigured) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+}
+
+// Configure multer for file uploads (use memory storage for Cloudinary)
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 50 * 1024 * 1024 // 50MB limit
   },
@@ -103,6 +105,28 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    if (!cloudinaryConfigured) {
+      return res.status(503).json({ error: 'File upload service not configured' });
+    }
+
+    // Upload to Cloudinary
+    const uploadResult = await new Promise((resolve, reject) => {
+      const fileExt = path.extname(req.file.originalname);
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'auto',
+          folder: 'documents',
+          public_id: `doc_${Date.now()}_${Math.round(Math.random() * 1E9)}${fileExt}`,
+          type: 'upload'
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
+    });
+
     const metadata = {
       title: req.body.title || req.file.originalname,
       description: req.body.description,
@@ -114,7 +138,9 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
     };
 
     const fileData = {
-      path: req.file.path,
+      path: uploadResult.public_id,
+      cloudinaryUrl: uploadResult.secure_url,
+      resourceType: uploadResult.resource_type,
       size: req.file.size,
       mimetype: req.file.mimetype,
       originalname: req.file.originalname
@@ -352,11 +378,43 @@ router.get('/:id/download', auth, async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    if (!fs.existsSync(document.file_path)) {
-      return res.status(404).json({ error: 'File not found on server' });
+    if (!cloudinaryConfigured) {
+      return res.status(503).json({ error: 'File download service not configured' });
     }
 
-    res.download(document.file_path, document.title);
+    // Generate signed download URL
+    const publicId = document.file_path;
+    const timestamp = Math.round(Date.now() / 1000);
+    const filename = document.title;
+    
+    const params = {
+      attachment: 'true',
+      public_id: publicId,
+      target_filename: filename,
+      timestamp: timestamp.toString(),
+      type: 'upload'
+    };
+    
+    const sortedParams = Object.keys(params)
+      .sort()
+      .map(key => `${key}=${params[key]}`)
+      .join('&');
+    
+    const stringToSign = sortedParams + process.env.CLOUDINARY_API_SECRET;
+    const signature = crypto.createHash('sha256').update(stringToSign).digest('hex');
+    
+    // Use stored resource_type or default to 'raw' for documents
+    const resourceType = document.resource_type || 'raw';
+    const downloadUrl = `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/download?` +
+      `api_key=${process.env.CLOUDINARY_API_KEY}&` +
+      `attachment=true&` +
+      `public_id=${encodeURIComponent(publicId)}&` +
+      `signature=${signature}&` +
+      `target_filename=${encodeURIComponent(filename)}&` +
+      `timestamp=${timestamp}&` +
+      `type=upload`;
+
+    res.json({ url: downloadUrl });
   } catch (error) {
     console.error('Error downloading document:', error);
     res.status(500).json({ error: error.message });

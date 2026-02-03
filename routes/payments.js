@@ -6,8 +6,7 @@ import Payment from '../models/Payment.js';
 import cmiPaymentService from '../services/cmiPaymentService.js';
 import pdfInvoiceService from '../services/pdfInvoiceService.js';
 import paymentAccountingService from '../services/paymentAccountingService.js';
-import path from 'path';
-import fs from 'fs';
+import axios from 'axios';
 
 const router = express.Router();
 
@@ -195,31 +194,36 @@ router.post('/cmi/callback', async (req, res) => {
       console.error('Failed to create journal entry:', journalResult.error);
     }
 
-    // Generate payment receipt PDF
-    const receiptData = {
-      receiptNumber: `REC-${Date.now()}`,
-      paymentDate: payment.date,
-      customer: {
-        name: user.name,
-        apartmentNumber: user.apartments?.[0]?.number || 'N/A'
-      },
-      building: {
-        name: user.apartments?.[0]?.building?.name || 'N/A'
-      },
-      amount: payment.totalAmount,
-      currency: 'MAD',
-      paymentMethod: 'cmi',
-      paymentReference: verification.transactionId,
-      invoiceNumber: payment.reference,
-      unionAgent: {
-        name: 'Union Agent',
-        address: 'Address',
-        phone: 'Phone'
-      },
-      journalReference: journalResult.success ? journalResult.journalEntry.reference : null
-    };
+    // Generate payment receipt PDF (optional - only if Cloudinary configured)
+    let receiptData = null;
+    try {
+      const receiptInfo = {
+        receiptNumber: `REC-${Date.now()}`,
+        paymentDate: payment.date,
+        customer: {
+          name: user.name,
+          apartmentNumber: user.apartments?.[0]?.number || 'N/A'
+        },
+        building: {
+          name: user.apartments?.[0]?.building?.name || 'N/A'
+        },
+        amount: payment.totalAmount,
+        currency: 'MAD',
+        paymentMethod: 'cmi',
+        paymentReference: verification.transactionId,
+        invoiceNumber: payment.reference,
+        unionAgent: {
+          name: 'Union Agent',
+          address: 'Address',
+          phone: 'Phone'
+        },
+        journalReference: journalResult.success ? journalResult.journalEntry.reference : null
+      };
 
-    const receiptPath = await pdfInvoiceService.generateReceipt(receiptData);
+      receiptData = await pdfInvoiceService.generateReceipt(receiptInfo);
+    } catch (pdfError) {
+      console.error('PDF generation failed (non-critical):', pdfError.message);
+    }
 
     res.json({
       success: true,
@@ -230,7 +234,7 @@ router.post('/cmi/callback', async (req, res) => {
         transactionId: verification.transactionId
       },
       journalEntry: journalResult.success ? journalResult.journalEntry : null,
-      receiptPath
+      receiptData
     });
   } catch (error) {
     console.error('Error processing CMI callback:', error);
@@ -345,82 +349,73 @@ router.get('/pdf/download/:filename', auth, async (req, res) => {
     // Extract payment ID from filename (format: receipt_PAYMENTID.pdf or invoice_PAYMENTID.pdf)
     const match = filename.match(/(receipt|invoice)_([a-f0-9]+)\.pdf/);
     
-    if (match) {
-      const [, type, paymentId] = match;
-      
-      // Find the payment
-      const payment = await Payment.findById(paymentId).populate('owner journalEntry');
-      
-      if (!payment) {
-        return res.status(404).json({ error: 'Payment not found' });
-      }
-      
-      // Generate PDF on-demand
-      const pdfData = {
-        receiptNumber: `REC-${payment._id}`,
-        paymentDate: payment.date,
-        customer: {
-          name: payment.owner.name,
-          email: payment.owner.email,
-          apartmentNumber: 'N/A'
-        },
-        building: {
-          name: 'Building Name'
-        },
-        amount: payment.totalAmount,
-        currency: 'MAD',
-        paymentMethod: payment.method,
-        paymentReference: payment.reference,
-        invoiceNumber: payment.reference,
-        unionAgent: {
-          name: 'Union Agent',
-          address: 'Address',
-          phone: 'Phone'
-        },
-        journalReference: payment.journalEntry?.reference || null
-      };
-      
-      let pdfPath;
-      if (type === 'receipt') {
-        pdfPath = await pdfInvoiceService.generateReceipt(pdfData);
-      } else {
-        pdfPath = await pdfInvoiceService.generateInvoice({
-          ...pdfData,
-          invoiceNumber: payment.reference,
-          invoiceDate: payment.date,
-          dueDate: payment.date,
-          items: [{
-            description: `Payment for building services`,
-            quantity: 1,
-            unitPrice: payment.totalAmount,
-            total: payment.totalAmount
-          }],
-          subtotal: payment.totalAmount,
-          tax: 0,
-          total: payment.totalAmount
-        });
-      }
-      
-      // Send the file
-      if (fs.existsSync(pdfPath)) {
-        return res.download(pdfPath);
-      }
+    if (!match) {
+      return res.status(400).json({ error: 'Invalid filename format' });
+    }
+
+    const [, type, paymentId] = match;
+    
+    // Find the payment
+    const payment = await Payment.findById(paymentId).populate('owner journalEntry');
+    
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
     }
     
-    // Fallback to old method
-    const invoicesDir = path.join(process.cwd(), 'storage', 'invoices');
-    const receiptsDir = path.join(process.cwd(), 'storage', 'receipts');
-
-    let filePath = path.join(invoicesDir, filename);
-    if (!fs.existsSync(filePath)) {
-      filePath = path.join(receiptsDir, filename);
+    // Generate PDF on-demand
+    const pdfData = {
+      receiptNumber: `REC-${payment._id}`,
+      paymentDate: payment.date,
+      customer: {
+        name: payment.owner.name,
+        email: payment.owner.email,
+        apartmentNumber: 'N/A'
+      },
+      building: {
+        name: 'Building Name'
+      },
+      amount: payment.totalAmount,
+      currency: 'MAD',
+      paymentMethod: payment.method,
+      paymentReference: payment.reference,
+      invoiceNumber: payment.reference,
+      unionAgent: {
+        name: 'Union Agent',
+        address: 'Address',
+        phone: 'Phone'
+      },
+      journalReference: payment.journalEntry?.reference || null
+    };
+    
+    let cloudinaryResult;
+    if (type === 'receipt') {
+      cloudinaryResult = await pdfInvoiceService.generateReceipt(pdfData);
+    } else {
+      cloudinaryResult = await pdfInvoiceService.generateInvoice({
+        ...pdfData,
+        invoiceNumber: payment.reference,
+        invoiceDate: payment.date,
+        dueDate: payment.date,
+        items: [{
+          description: `Payment for building services`,
+          quantity: 1,
+          unitPrice: payment.totalAmount,
+          total: payment.totalAmount
+        }],
+        subtotal: payment.totalAmount,
+        tax: 0,
+        total: payment.totalAmount
+      });
     }
-
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'File not found' });
+    
+    if (!cloudinaryResult) {
+      return res.status(503).json({ 
+        error: 'PDF generation unavailable' 
+      });
     }
-
-    res.download(filePath);
+    
+    // Return the URL directly
+    res.json({ url: cloudinaryResult.url });
   } catch (error) {
     console.error('Error downloading PDF:', error);
     res.status(500).json({ error: error.message });

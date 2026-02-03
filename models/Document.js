@@ -21,6 +21,7 @@ const DocumentSchema = new mongoose.Schema({
   // File Information
   file_path: { type: String, required: true },
   url: { type: String }, // Public URL if applicable
+  resource_type: { type: String }, // Cloudinary resource type (image, raw, video, etc.)
   size_bytes: { type: Number },
   mime_type: { type: String },
   

@@ -1,35 +1,80 @@
 import PDFDocument from 'pdfkit';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { v2 as cloudinary } from 'cloudinary';
+import crypto from 'crypto';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Configure Cloudinary only if credentials are provided
+const cloudinaryConfigured = 
+  process.env.CLOUDINARY_CLOUD_NAME && 
+  process.env.CLOUDINARY_API_KEY && 
+  process.env.CLOUDINARY_API_SECRET &&
+  !process.env.CLOUDINARY_CLOUD_NAME.includes('your_') &&
+  !process.env.CLOUDINARY_API_KEY.includes('your_');
+
+if (cloudinaryConfigured) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+}
 
 /**
  * PDF Invoice Generator Service
  * Generates official invoices and payment receipts with digital signature support
+ * Uploads PDFs to Cloudinary for serverless deployment compatibility
  */
 class PDFInvoiceService {
   constructor() {
-    this.invoicesDir = path.join(__dirname, '..', 'storage', 'invoices');
-    this.receiptsDir = path.join(__dirname, '..', 'storage', 'receipts');
+    this.cloudinaryEnabled = cloudinaryConfigured;
+  }
+
+  /**
+   * Get authenticated download URL for Cloudinary resource
+   */
+  getDownloadUrl(publicId, filename) {
+    if (!this.cloudinaryEnabled) return null;
     
-    // Create directories if they don't exist
-    if (!fs.existsSync(this.invoicesDir)) {
-      fs.mkdirSync(this.invoicesDir, { recursive: true });
-    }
-    if (!fs.existsSync(this.receiptsDir)) {
-      fs.mkdirSync(this.receiptsDir, { recursive: true });
-    }
+    const timestamp = Math.round(Date.now() / 1000);
+    
+    // Build parameters object and sort alphabetically
+    const params = {
+      attachment: 'true',
+      public_id: publicId,
+      target_filename: filename,
+      timestamp: timestamp.toString(),
+      type: 'upload'
+    };
+    
+    // Sort parameters alphabetically and build string to sign
+    const sortedParams = Object.keys(params)
+      .sort()
+      .map(key => `${key}=${params[key]}`)
+      .join('&');
+    
+    const stringToSign = sortedParams + process.env.CLOUDINARY_API_SECRET;
+    const signature = crypto.createHash('sha256').update(stringToSign).digest('hex');
+    
+    return `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/raw/download?` +
+      `api_key=${process.env.CLOUDINARY_API_KEY}&` +
+      `attachment=true&` +
+      `public_id=${encodeURIComponent(publicId)}&` +
+      `signature=${signature}&` +
+      `target_filename=${encodeURIComponent(filename)}&` +
+      `timestamp=${timestamp}&` +
+      `type=upload`;
   }
 
   /**
    * Generate official invoice PDF
    * @param {Object} invoiceData - Invoice information
-   * @returns {Promise<string>} Path to generated PDF
+   * @returns {Promise<string|null>} Cloudinary URL to generated PDF or null if Cloudinary not configured
    */
   async generateInvoice(invoiceData) {
+    if (!this.cloudinaryEnabled) {
+      console.warn('Cloudinary not configured - skipping PDF generation');
+      return null;
+    }
+
     const {
       invoiceNumber,
       invoiceDate,
@@ -46,18 +91,49 @@ class PDFInvoiceService {
       notes
     } = invoiceData;
 
-    const fileName = `invoice_${invoiceNumber}_${Date.now()}.pdf`;
-    const filePath = path.join(this.invoicesDir, fileName);
+    const fileName = `invoice_${invoiceNumber}_${Date.now()}`;
 
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 50 });
-        const stream = fs.createWriteStream(filePath);
-
-        doc.pipe(stream);
+        
+        // Collect PDF data in buffers
+        const buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
+        doc.on('end', async () => {
+          try {
+            const pdfBuffer = Buffer.concat(buffers);
+            
+            // Upload to Cloudinary with public access
+            const uploadStream = cloudinary.uploader.upload_stream(
+              {
+                resource_type: 'raw',
+                folder: 'invoices',
+                public_id: fileName,
+                format: 'pdf',
+                type: 'upload'
+              },
+              (error, result) => {
+                if (error) {
+                  reject(error);
+                } else {
+                  // Return download URL
+                  resolve({
+                    url: this.getDownloadUrl(result.public_id, `invoice_${invoiceNumber}.pdf`),
+                    publicId: result.public_id
+                  });
+                }
+              }
+            );
+            
+            uploadStream.end(pdfBuffer);
+          } catch (error) {
+            reject(error);
+          }
+        });
 
         // Header
-        doc.fontSize(20).font('Helvetica-Bold').text('RECEIPT / RECU', { align: 'center' });
+        doc.fontSize(20).font('Helvetica-Bold').text('INVOICE', { align: 'center' });
         doc.moveDown();
 
         // Union Agent Info (Top Left)
@@ -68,7 +144,7 @@ class PDFInvoiceService {
           .text(unionAgent.email || 'Email');
 
         // Invoice Details (Top Right)
-        doc.fontSize(10).font('Helvetica-Bold').text(`Receipt Number: ${invoiceNumber}`, 350, 100, { align: 'right' });
+        doc.fontSize(10).font('Helvetica-Bold').text(`Invoice Number: ${invoiceNumber}`, 350, 100, { align: 'right' });
         doc.font('Helvetica').fontSize(9)
           .text(`Date: ${new Date(invoiceDate).toLocaleDateString('en-US')}`, { align: 'right' })
           .text(`Due Date: ${new Date(dueDate).toLocaleDateString('en-US')}`, { align: 'right' });
@@ -150,8 +226,8 @@ class PDFInvoiceService {
         // Footer - Signature area
         yPosition = 700;
         doc.fontSize(9).font('Helvetica-Bold');
-        doc.text('توقيع الوكيل:', 50, yPosition);
-        doc.text('توقيع العميل:', 350, yPosition);
+        doc.text('Agent Signature:', 50, yPosition);
+        doc.text('Customer Signature:', 350, yPosition);
         
         // Signature lines
         doc.moveTo(50, yPosition + 40).lineTo(200, yPosition + 40).stroke();
@@ -159,17 +235,9 @@ class PDFInvoiceService {
 
         // Digital signature placeholder
         doc.fontSize(7).font('Helvetica-Oblique');
-        doc.text('هذا المستند قابل للتوقيع الإلكتروني', 50, yPosition + 60, { align: 'center', width: 500 });
+        doc.text('This document supports digital signature', 50, yPosition + 60, { align: 'center', width: 500 });
 
         doc.end();
-
-        stream.on('finish', () => {
-          resolve(filePath);
-        });
-
-        stream.on('error', (error) => {
-          reject(error);
-        });
       } catch (error) {
         reject(error);
       }
@@ -179,9 +247,14 @@ class PDFInvoiceService {
   /**
    * Generate payment receipt PDF
    * @param {Object} receiptData - Receipt information
-   * @returns {Promise<string>} Path to generated PDF
+   * @returns {Promise<string|null>} Cloudinary URL to generated PDF or null if Cloudinary not configured
    */
   async generateReceipt(receiptData) {
+    if (!this.cloudinaryEnabled) {
+      console.warn('Cloudinary not configured - skipping PDF generation');
+      return null;
+    }
+
     const {
       receiptNumber,
       paymentDate,
@@ -196,19 +269,50 @@ class PDFInvoiceService {
       journalReference
     } = receiptData;
 
-    const fileName = `receipt_${receiptNumber}_${Date.now()}.pdf`;
-    const filePath = path.join(this.receiptsDir, fileName);
+    const fileName = `receipt_${receiptNumber}_${Date.now()}`;
 
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({ size: 'A4', margin: 50 });
-        const stream = fs.createWriteStream(filePath);
-
-        doc.pipe(stream);
+        
+        // Collect PDF data in buffers
+        const buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
+        doc.on('end', async () => {
+          try {
+            const pdfBuffer = Buffer.concat(buffers);
+            
+            // Upload to Cloudinary with public access
+            const uploadStream = cloudinary.uploader.upload_stream(
+              {
+                resource_type: 'raw',
+                folder: 'receipts',
+                public_id: fileName,
+                format: 'pdf',
+                type: 'upload'
+              },
+              (error, result) => {
+                if (error) {
+                  reject(error);
+                } else {
+                  // Return download URL
+                  resolve({
+                    url: this.getDownloadUrl(result.public_id, `receipt_${receiptNumber}.pdf`),
+                    publicId: result.public_id
+                  });
+                }
+              }
+            );
+            
+            uploadStream.end(pdfBuffer);
+          } catch (error) {
+            reject(error);
+          }
+        });
 
         // Header
         doc.fontSize(24).font('Helvetica-Bold').text('PAYMENT RECEIPT', { align: 'center' });
-        doc.fontSize(12).font('Helvetica').text('REÇU DE PAIEMENT', { align: 'center' });
+        doc.fontSize(12).font('Helvetica').text('RECU DE PAIEMENT', { align: 'center' });
         doc.moveDown(2);
 
         // Receipt Box
@@ -218,7 +322,7 @@ class PDFInvoiceService {
         doc.fontSize(16).font('Helvetica-Bold')
           .text(`Receipt Number: ${receiptNumber}`, { align: 'center' });
         doc.fontSize(10).font('Helvetica')
-          .text(`Numéro de reçu: ${receiptNumber}`, { align: 'center' });
+          .text(`Numero de recu: ${receiptNumber}`, { align: 'center' });
         doc.moveDown(2);
 
         // Payment Details
@@ -299,14 +403,6 @@ class PDFInvoiceService {
         doc.text(`Issue Date: ${new Date().toLocaleString('en-US')}`, { align: 'center' });
 
         doc.end();
-
-        stream.on('finish', () => {
-          resolve(filePath);
-        });
-
-        stream.on('error', (error) => {
-          reject(error);
-        });
       } catch (error) {
         reject(error);
       }
@@ -328,22 +424,6 @@ class PDFInvoiceService {
       'direct_debit': 'Direct Debit'
     };
     return labels[method] || method;
-  }
-
-  /**
-   * Delete invoice/receipt file
-   */
-  async deleteFile(filePath) {
-    try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('Error deleting PDF file:', error);
-      return false;
-    }
   }
 }
 
