@@ -15,6 +15,7 @@ import apartementRoutes from "./routes/Apartement.js";
 import propertyOwnerRoutes from "./routes/Propertyowner.js";
 import builldingRoutes from "./routes/Building.js";
 import accountingRoutes from "./routes/accountingNew.js";
+import documentRoutes from "./routes/documents.js";
 //testing
 dotenv.config(); // Load environment variables
 
@@ -91,6 +92,7 @@ app.use("/api/apartments", apartementRoutes);
 app.use("/api/property-owners", propertyOwnerRoutes);
 app.use("/api/buildings", builldingRoutes);
 app.use("/api/accounting", accountingRoutes);
+app.use("/api/documents", documentRoutes);
 
 // Register API routes
 // registerRoutes(app);

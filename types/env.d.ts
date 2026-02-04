@@ -12,7 +12,11 @@ declare namespace NodeJS {
           CMI_GATEWAY_URL: string;
           CMI_CALLBACK_URL: string;
           CMI_FAIL_URL: string;
-          CMI_OK_URL: string
+          CMI_OK_URL: string;
+          CMI_MOCK_MODE: string;
+          CLOUDINARY_CLOUD_NAME: string;
+          CLOUDINARY_API_KEY: string;
+          CLOUDINARY_API_SECRET: string
     } 
 }
     

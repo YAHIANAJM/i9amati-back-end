@@ -6,40 +6,77 @@ import Payment from '../models/Payment.js';
 import cmiPaymentService from '../services/cmiPaymentService.js';
 import pdfInvoiceService from '../services/pdfInvoiceService.js';
 import paymentAccountingService from '../services/paymentAccountingService.js';
-import path from 'path';
-import fs from 'fs';
+import axios from 'axios';
 
 const router = express.Router();
 
 // List payments for current user context
 router.get('/', auth, async (req, res) => {
   const role = req.user.role;
-  let query = {};
+  let financialQuery = {};
+  let paymentQuery = {};
 
   if (role === 'union_agent') {
     // Use User model directly
     const agent = await User.findById(req.user.id);
     if (!agent) return res.json([]);
-    query.apartment_id = { $in: agent.apartments };
+    financialQuery.apartment_id = { $in: agent.apartments };
+    // For Payment model, get all payments (union agent sees all)
+    // You might want to filter by building later
   } else if (role === 'property_owner') {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ error: "User not found" });
 
     // Handle multiple apartments
     if (user.apartments && user.apartments.length > 0) {
-      query.$or = [
+      financialQuery.$or = [
         { owner_id: user._id },
         { apartment_id: { $in: user.apartments } }
       ];
     } else {
-      query.owner_id = user._id;
+      financialQuery.owner_id = user._id;
     }
+    
+    // For Payment model (CMI payments)
+    paymentQuery.owner = user._id;
   }
 
-  const payments = await Financial.find(query)
-    .populate('journalEntry')
-    .sort({ due_date: -1 });
-  res.json(payments);
+  // Fetch both Financial and Payment records
+  const [financialPayments, cmiPayments] = await Promise.all([
+    Financial.find(financialQuery)
+      .populate('journalEntry')
+      .sort({ due_date: -1 }),
+    Payment.find(paymentQuery)
+      .populate('journalEntry')
+      .sort({ date: -1 })
+  ]);
+
+  // Combine and format payments
+  const allPayments = [
+    ...financialPayments.map(p => ({
+      _id: p._id,
+      due_date: p.due_date,
+      paid_at: p.paid_at,
+      description: p.description || p.type,
+      amount: p.amount,
+      status: p.status,
+      journalEntry: p.journalEntry,
+      type: 'financial'
+    })),
+    ...cmiPayments.map(p => ({
+      _id: p._id,
+      due_date: p.date,
+      paid_at: p.date,
+      description: `CMI Payment - ${p.reference}`,
+      amount: p.totalAmount,
+      status: p.status === 'confirmed' ? 'paid' : p.status,
+      journalEntry: p.journalEntry,
+      reference: p.reference,
+      type: 'cmi'
+    }))
+  ].sort((a, b) => new Date(b.due_date || b.paid_at) - new Date(a.due_date || a.paid_at));
+
+  res.json(allPayments);
 });
 
 // Create CMI payment request
@@ -104,8 +141,22 @@ router.post('/cmi/callback', async (req, res) => {
   try {
     const callbackData = req.body;
 
-    // Verify payment with CMI
-    const verification = cmiPaymentService.verifyPaymentCallback(callbackData);
+    // Check if this is a mock payment (for testing)
+    const isMockPayment = callbackData.hash === 'mock-hash-signature' || process.env.CMI_MOCK_MODE === 'true';
+
+    let verification;
+    if (isMockPayment) {
+      // Mock verification for testing
+      verification = {
+        isValid: true,
+        orderId: callbackData.orderId,
+        transactionId: callbackData.transactionId || `TXN-MOCK-${Date.now()}`,
+        status: callbackData.status || 'APPROVED'
+      };
+    } else {
+      // Real CMI verification
+      verification = cmiPaymentService.verifyPaymentCallback(callbackData);
+    }
 
     if (!verification.isValid) {
       return res.status(400).json({ error: 'Invalid payment signature' });
@@ -143,31 +194,36 @@ router.post('/cmi/callback', async (req, res) => {
       console.error('Failed to create journal entry:', journalResult.error);
     }
 
-    // Generate payment receipt PDF
-    const receiptData = {
-      receiptNumber: `REC-${Date.now()}`,
-      paymentDate: payment.date,
-      customer: {
-        name: user.name,
-        apartmentNumber: user.apartments?.[0]?.number || 'N/A'
-      },
-      building: {
-        name: user.apartments?.[0]?.building?.name || 'N/A'
-      },
-      amount: payment.totalAmount,
-      currency: 'MAD',
-      paymentMethod: 'cmi',
-      paymentReference: verification.transactionId,
-      invoiceNumber: payment.reference,
-      unionAgent: {
-        name: 'Union Agent',
-        address: 'Address',
-        phone: 'Phone'
-      },
-      journalReference: journalResult.success ? journalResult.journalEntry.reference : null
-    };
+    // Generate payment receipt PDF (optional - only if Cloudinary configured)
+    let receiptData = null;
+    try {
+      const receiptInfo = {
+        receiptNumber: `REC-${Date.now()}`,
+        paymentDate: payment.date,
+        customer: {
+          name: user.name,
+          apartmentNumber: user.apartments?.[0]?.number || 'N/A'
+        },
+        building: {
+          name: user.apartments?.[0]?.building?.name || 'N/A'
+        },
+        amount: payment.totalAmount,
+        currency: 'MAD',
+        paymentMethod: 'cmi',
+        paymentReference: verification.transactionId,
+        invoiceNumber: payment.reference,
+        unionAgent: {
+          name: 'Union Agent',
+          address: 'Address',
+          phone: 'Phone'
+        },
+        journalReference: journalResult.success ? journalResult.journalEntry.reference : null
+      };
 
-    const receiptPath = await pdfInvoiceService.generateReceipt(receiptData);
+      receiptData = await pdfInvoiceService.generateReceipt(receiptInfo);
+    } catch (pdfError) {
+      console.error('PDF generation failed (non-critical):', pdfError.message);
+    }
 
     res.json({
       success: true,
@@ -178,7 +234,7 @@ router.post('/cmi/callback', async (req, res) => {
         transactionId: verification.transactionId
       },
       journalEntry: journalResult.success ? journalResult.journalEntry : null,
-      receiptPath
+      receiptData
     });
   } catch (error) {
     console.error('Error processing CMI callback:', error);
@@ -289,19 +345,77 @@ router.post('/invoice/generate', auth, async (req, res) => {
 router.get('/pdf/download/:filename', auth, async (req, res) => {
   try {
     const { filename } = req.params;
-    const invoicesDir = path.join(process.cwd(), 'storage', 'invoices');
-    const receiptsDir = path.join(process.cwd(), 'storage', 'receipts');
-
-    let filePath = path.join(invoicesDir, filename);
-    if (!fs.existsSync(filePath)) {
-      filePath = path.join(receiptsDir, filename);
+    
+    // Extract payment ID from filename (format: receipt_PAYMENTID.pdf or invoice_PAYMENTID.pdf)
+    const match = filename.match(/(receipt|invoice)_([a-f0-9]+)\.pdf/);
+    
+    if (!match) {
+      return res.status(400).json({ error: 'Invalid filename format' });
     }
 
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'File not found' });
+    const [, type, paymentId] = match;
+    
+    // Find the payment
+    const payment = await Payment.findById(paymentId).populate('owner journalEntry');
+    
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
     }
-
-    res.download(filePath);
+    
+    // Generate PDF on-demand
+    const pdfData = {
+      receiptNumber: `REC-${payment._id}`,
+      paymentDate: payment.date,
+      customer: {
+        name: payment.owner.name,
+        email: payment.owner.email,
+        apartmentNumber: 'N/A'
+      },
+      building: {
+        name: 'Building Name'
+      },
+      amount: payment.totalAmount,
+      currency: 'MAD',
+      paymentMethod: payment.method,
+      paymentReference: payment.reference,
+      invoiceNumber: payment.reference,
+      unionAgent: {
+        name: 'Union Agent',
+        address: 'Address',
+        phone: 'Phone'
+      },
+      journalReference: payment.journalEntry?.reference || null
+    };
+    
+    let cloudinaryResult;
+    if (type === 'receipt') {
+      cloudinaryResult = await pdfInvoiceService.generateReceipt(pdfData);
+    } else {
+      cloudinaryResult = await pdfInvoiceService.generateInvoice({
+        ...pdfData,
+        invoiceNumber: payment.reference,
+        invoiceDate: payment.date,
+        dueDate: payment.date,
+        items: [{
+          description: `Payment for building services`,
+          quantity: 1,
+          unitPrice: payment.totalAmount,
+          total: payment.totalAmount
+        }],
+        subtotal: payment.totalAmount,
+        tax: 0,
+        total: payment.totalAmount
+      });
+    }
+    
+    if (!cloudinaryResult) {
+      return res.status(503).json({ 
+        error: 'PDF generation unavailable' 
+      });
+    }
+    
+    // Return the URL directly
+    res.json({ url: cloudinaryResult.url });
   } catch (error) {
     console.error('Error downloading PDF:', error);
     res.status(500).json({ error: error.message });

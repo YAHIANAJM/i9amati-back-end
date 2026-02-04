@@ -24,7 +24,20 @@ export const auth = async (req, res, next) => {
     const secret = process.env.JWT_SECRET || 'secret';
     const decoded = jwt.verify(token, secret);
     console.log('Decoded JWT:', decoded);
-    req.user = decoded;
+    
+    // Fetch full user object for building filtering
+    const user = await User.findById(decoded.id).select('-password_hash');
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+    
+    req.user = {
+      _id: user._id,
+      id: user._id.toString(),
+      role: user.role,
+      name: user.name,
+      email: user.email
+    };
     next();
   } catch (err) {
     console.log('JWT verification error:', err.message);

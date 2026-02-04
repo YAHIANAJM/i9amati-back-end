@@ -9,12 +9,56 @@ import Building from '../models/Building.js';
 /**
  * GET /api/property-owners
  * Get all property owners (for dropdowns, lists, etc.)
+ * For union agents, only return owners from their building
+ * NOTE: Owners are embedded in Apartments, not separate User documents
  */
 export const getAllOwners = async (req, res) => {
   try {
-    const owners = await User.find({ role: 'property_owner', status: 'ACTIVE' })
-      .select('name email nationalId status')
-      .sort({ name: 1 });
+    let apartmentQuery = {};
+    
+    // If request comes from a union agent, filter by their building
+    if (req.user && req.user.role === 'union_agent') {
+      // Find the agent's building
+      const building = await Building.findOne({ agent: req.user._id });
+      
+      if (building) {
+        apartmentQuery.building = building._id;
+      }
+    }
+    
+    // Get all apartments with embedded owners
+    const apartments = await Apartment.find(apartmentQuery)
+      .select('unit_code apartment_number floor owners main_plot_number')
+      .lean();
+
+    // Extract all unique owners from apartments
+    const ownersMap = new Map();
+    
+    apartments.forEach(apt => {
+      if (apt.owners && apt.owners.length > 0) {
+        apt.owners.forEach(owner => {
+          const key = owner.email || owner.nationalId; // Use email or nationalId as unique key
+          if (!ownersMap.has(key)) {
+            ownersMap.set(key, {
+              _id: owner._id || owner.nationalId, // Use embedded _id or nationalId
+              name: `${owner.firstName} ${owner.lastName}`,
+              firstName: owner.firstName,
+              lastName: owner.lastName,
+              email: owner.email,
+              nationalId: owner.nationalId,
+              phone: owner.phone,
+              isRepresentative: owner.isRepresentative,
+              apartments: [apt] // Store apartment info
+            });
+          } else {
+            // Add apartment to existing owner
+            ownersMap.get(key).apartments.push(apt);
+          }
+        });
+      }
+    });
+
+    const owners = Array.from(ownersMap.values());
 
     res.status(200).json({
       success: true,
