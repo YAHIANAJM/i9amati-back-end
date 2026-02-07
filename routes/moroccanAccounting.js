@@ -1,0 +1,49 @@
+import express from 'express';
+import { 
+  getChartOfAccounts,
+  getJournalBook,
+  getGeneralLedger,
+  getBudgetComparison,
+  createBudget,
+  getBalanceSheet,
+  getIncomeStatement,
+  getReserveFunds,
+  getLoans,
+  createLoan,
+  getOwnerContributions,
+  createOwnerContribution
+} from '../controllers/moroccanAccountingController.js';
+import { auth, requireRole } from '../middleware/auth.js';
+
+const router = express.Router();
+
+// All routes require authentication
+router.use(auth);
+
+// Chart of Accounts
+router.get('/chart-of-accounts', getChartOfAccounts);
+
+// Digital Ledgers
+router.get('/journal', getJournalBook); // دفتر اليومية
+router.get('/general-ledger', getGeneralLedger); // دفتر الأستاذ
+
+// Budget System
+router.get('/budget-comparison', getBudgetComparison); // 3-year comparison (n-1, n, n+1)
+router.post('/budget', requireRole('union_agent'), createBudget);
+
+// Financial Statements
+router.get('/financial-statements/balance-sheet', getBalanceSheet); // الحصيلة
+router.get('/financial-statements/income-statement', getIncomeStatement); // حساب التسيير
+
+// Reserve Funds
+router.get('/reserves', getReserveFunds); // احتياطيات
+
+// Loans
+router.get('/loans', getLoans);
+router.post('/loans', requireRole('union_agent'), createLoan);
+
+// Owner Contributions Tracking
+router.get('/owner-contributions', getOwnerContributions);
+router.post('/owner-contributions', requireRole('union_agent'), createOwnerContribution);
+
+export default router;
