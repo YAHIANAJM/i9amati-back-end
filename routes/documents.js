@@ -422,6 +422,67 @@ router.get('/:id/download', auth, async (req, res) => {
 });
 
 /**
+ * GET /api/documents/:id/view - View document without downloading
+ */
+router.get('/:id/view', auth, async (req, res) => {
+  try {
+    // Check access
+    const hasAccess = await documentAccessControl.canAccessDocument(
+      req.params.id,
+      req.user.id,
+      req.user.role
+    );
+
+    if (!hasAccess) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const document = await Document.findById(req.params.id);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    if (!cloudinaryConfigured) {
+      return res.status(503).json({ error: 'File view service not configured' });
+    }
+
+    // Generate signed URL for viewing (without attachment parameter, with inline flag)
+    const publicId = document.file_path;
+    const timestamp = Math.round(Date.now() / 1000);
+    
+    const params = {
+      public_id: publicId,
+      timestamp: timestamp.toString(),
+      type: 'upload'
+    };
+    
+    const sortedParams = Object.keys(params)
+      .sort()
+      .map(key => `${key}=${params[key]}`)
+      .join('&');
+    
+    const stringToSign = sortedParams + process.env.CLOUDINARY_API_SECRET;
+    const signature = crypto.createHash('sha256').update(stringToSign).digest('hex');
+    
+    // Use stored resource_type or default to 'raw' for documents
+    const resourceType = document.resource_type || 'raw';
+    
+    // Build URL with fl_attachment flag set to false for inline viewing
+    const viewUrl = `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/download?` +
+      `api_key=${process.env.CLOUDINARY_API_KEY}&` +
+      `public_id=${encodeURIComponent(publicId)}&` +
+      `signature=${signature}&` +
+      `timestamp=${timestamp}&` +
+      `type=upload`;
+
+    res.json({ url: viewUrl });
+  } catch (error) {
+    console.error('Error viewing document:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
  * GET /api/documents/:id/workflow-history - Get workflow history
  */
 router.get('/:id/workflow-history', auth, async (req, res) => {

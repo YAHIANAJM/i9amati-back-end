@@ -3,12 +3,47 @@ import { auth } from '../middleware/auth.js';
 import Financial from '../models/Financial.js';
 import User from '../models/User.js';
 import Payment from '../models/Payment.js';
+import Document from '../models/Document.js';
 import cmiPaymentService from '../services/cmiPaymentService.js';
 import pdfInvoiceService from '../services/pdfInvoiceService.js';
 import paymentAccountingService from '../services/paymentAccountingService.js';
 import axios from 'axios';
+import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
+import crypto from 'crypto';
+import streamifier from 'streamifier';
+import path from 'path';
 
 const router = express.Router();
+
+// Configure Cloudinary
+const cloudinaryConfigured = 
+  process.env.CLOUDINARY_CLOUD_NAME && 
+  process.env.CLOUDINARY_API_KEY && 
+  process.env.CLOUDINARY_API_SECRET;
+
+if (cloudinaryConfigured) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+}
+
+// Configure multer for receipt uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /pdf|jpg|jpeg|png/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    if (extname) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF, JPG, JPEG, PNG files allowed'));
+    }
+  }
+});
 
 // List payments for current user context
 router.get('/', auth, async (req, res) => {
@@ -119,6 +154,7 @@ router.post('/cmi/create', auth, async (req, res) => {
       date: new Date(),
       totalAmount: amount,
       method: 'cmi',
+      payment_type: 'automatic',
       reference: orderId,
       status: 'pending'
     });
@@ -435,6 +471,140 @@ router.get('/:paymentId/journal', auth, async (req, res) => {
     res.json(journalDetails);
   } catch (error) {
     console.error('Error fetching journal details:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create manual payment
+router.post('/manual', auth, async (req, res) => {
+  try {
+    const { amount, method, reference, description } = req.body;
+
+    if (!amount || !method) {
+      return res.status(400).json({ error: 'Amount and payment method are required' });
+    }
+
+    // Create payment with status 'paid_manually'
+    const payment = new Payment({
+      owner: req.user.id,
+      date: new Date(),
+      totalAmount: amount,
+      method: method,
+      payment_type: 'manual',
+      reference: reference || `MAN-${Date.now()}`,
+      status: 'paid_manually'
+    });
+
+    await payment.save();
+
+    res.status(201).json({
+      success: true,
+      payment,
+      message: 'Manual payment created. Please upload bank receipt to confirm.'
+    });
+  } catch (error) {
+    console.error('Error creating manual payment:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Upload receipt and confirm manual payment
+router.post('/:paymentId/upload-receipt', auth, upload.single('receipt'), async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No receipt file uploaded' });
+    }
+
+    if (!cloudinaryConfigured) {
+      return res.status(503).json({ error: 'File upload service not configured' });
+    }
+
+    // Find payment
+    const payment = await Payment.findById(paymentId).populate('owner');
+    if (!payment) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    // Check authorization
+    if (req.user.role !== 'union_agent' && payment.owner._id.toString() !== req.user.id) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
+    // Upload receipt to Cloudinary
+    const uploadResult = await new Promise((resolve, reject) => {
+      const fileExt = path.extname(req.file.originalname);
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'auto',
+          folder: 'receipts',
+          public_id: `receipt_${paymentId}_${Date.now()}${fileExt}`,
+          type: 'upload'
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
+    });
+
+    // Create document record
+    const document = new Document({
+      title: `Bank Receipt - ${payment.reference}`,
+      description: `Bank receipt for payment ${payment.reference}`,
+      category: 'Financial',
+      type: path.extname(req.file.originalname).substring(1).toUpperCase(),
+      file_path: uploadResult.public_id,
+      url: uploadResult.secure_url,
+      resource_type: uploadResult.resource_type,
+      size_bytes: req.file.size,
+      mime_type: req.file.mimetype,
+      access_level: 'agent_only',
+      workflow_status: 'published',
+      uploaded_by: req.user.id,
+      uploaded_at: new Date(),
+      version: 1,
+      is_latest: true
+    });
+
+    await document.save();
+
+    // Update payment status
+    payment.status = 'paid_effectively';
+    payment.receipt_document = document._id;
+    payment.receipt_uploaded_at = new Date();
+    await payment.save();
+
+    // Create journal entry now that payment is confirmed
+    const user = await User.findById(payment.owner).populate('apartments');
+    const journalResult = await paymentAccountingService.createPaymentJournalEntry({
+      paymentId: payment._id,
+      amount: payment.totalAmount,
+      paymentDate: payment.date,
+      customerId: user._id,
+      customerName: user.name,
+      apartmentId: user.apartments?.[0]?._id,
+      paymentMethod: payment.method,
+      paymentReference: payment.reference,
+      description: `Manual Payment - Receipt uploaded`
+    });
+
+    if (journalResult.success) {
+      payment.journalEntry = journalResult.journalEntry._id;
+      await payment.save();
+    }
+
+    res.json({
+      success: true,
+      payment,
+      document,
+      journalEntry: journalResult.success ? journalResult.journalEntry : null,
+      message: 'Receipt uploaded and payment confirmed successfully'
+    });
+  } catch (error) {
+    console.error('Error uploading receipt:', error);
     res.status(500).json({ error: error.message });
   }
 });
