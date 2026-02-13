@@ -1,6 +1,31 @@
 import express from 'express';
 import Service from '../models/Service.js';
 import { auth } from '../middleware/auth.js';
+import multer from 'multer';
+import { v2 as cloudinary } from 'cloudinary';
+import streamifier from 'streamifier';
+
+// Configure Cloudinary
+const cloudinaryConfigured = 
+  process.env.CLOUDINARY_CLOUD_NAME && 
+  process.env.CLOUDINARY_API_KEY && 
+  process.env.CLOUDINARY_API_SECRET;
+
+if (cloudinaryConfigured) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+  });
+}
+
+// Configure multer for file uploads (memory storage)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024 // 50MB limit for videos
+  }
+});
 
 const router = express.Router();
 
@@ -78,6 +103,95 @@ router.patch('/:id/tasks/:taskId', async (req, res) => {
     console.error('PATCH Task Status Error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+
+// Upload media for a task
+router.post('/:id/tasks/:taskId/upload', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        if (!cloudinaryConfigured) {
+            return res.status(503).json({ error: 'Cloudinary not configured' });
+        }
+
+        const isVideo = req.file.mimetype.startsWith('video/');
+        const resourceType = isVideo ? 'video' : 'image';
+
+        // Upload to Cloudinary
+        const uploadResult = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    resource_type: resourceType,
+                    folder: 'service-tasks',
+                },
+                (error, result) => {
+                    if (error) reject(error);
+                    else resolve(result);
+                }
+            );
+            streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
+        });
+
+        const service = await Service.findById(req.params.id);
+        if (!service) return res.status(404).json({ error: 'Service not found' });
+
+        const { taskIdx } = req.query;
+        let taskFound = false;
+        let targetTask = null;
+
+        // 1. Try matching by ID
+        for (const schedule of service.schedules) {
+            for (const task of schedule.tasks) {
+                if (task._id && String(task._id) === String(req.params.taskId)) {
+                    targetTask = task;
+                    taskFound = true;
+                    break;
+                }
+            }
+            if (taskFound) break;
+        }
+
+        // 2. Try matching by Text
+        if (!taskFound) {
+            for (const schedule of service.schedules) {
+                for (const task of schedule.tasks) {
+                    const getTaskText = (t) => {
+                       if (typeof t === 'string') return t;
+                       if (t.text) return t.text;
+                       const keys = Object.keys(t).filter(k => !isNaN(k)).sort((a,b) => parseInt(a) - parseInt(b));
+                       if (keys.length > 0) return keys.map(k => t[k]).join('');
+                       return '';
+                   };
+                   if (req.params.taskId === getTaskText(task)) {
+                       targetTask = task;
+                       taskFound = true;
+                       break;
+                   }
+                }
+                if (taskFound) break;
+            }
+        }
+
+        if (!targetTask) return res.status(404).json({ error: 'Task not found' });
+
+        // Add attachment
+        if (!targetTask.attachments) targetTask.attachments = [];
+        targetTask.attachments.push({
+            type: resourceType,
+            url: uploadResult.secure_url,
+            publicId: uploadResult.public_id
+        });
+
+        await service.save();
+        res.json(targetTask);
+
+    } catch (err) {
+        console.error("Upload Error:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // List services (optionally filter by status/type)

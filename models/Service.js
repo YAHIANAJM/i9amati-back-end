@@ -35,7 +35,13 @@ const ServiceSchema = new mongoose.Schema({
     description: String, // Description of the shift
     tasks: [{
       text: String,
-      status: { type: String, enum: ['pending', 'completed'], default: 'pending' }
+      status: { type: String, enum: ['pending', 'completed'], default: 'pending' },
+      attachments: [{
+        type: { type: String, enum: ['image', 'video'] },
+        url: String,
+        publicId: String,
+        uploadedAt: { type: Date, default: Date.now }
+      }]
     }]
   }],
 
