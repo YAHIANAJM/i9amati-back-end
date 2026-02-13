@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 const Schema = mongoose.Schema;
 
 const BudgetSchema = new Schema({
-  residence_id: { type: Schema.Types.ObjectId, ref: 'Residence', required: true, index: true },
+  residence_id: { type: Schema.Types.ObjectId, ref: 'Residence', required: false, index: true },
   year: { type: Number, required: true, index: true },
   budgetType: { 
     type: String, 
@@ -30,7 +30,7 @@ BudgetSchema.statics.getThreeYearComparison = async function(residenceId, curren
     query.residence_id = residenceId;
   }
   
-  const budgets = await this.find(query).populate('accountNumber');
+  const budgets = await this.find(query);
 
   // Group by account
   const comparison = {};
@@ -59,75 +59,80 @@ BudgetSchema.statics.getThreeYearComparison = async function(residenceId, curren
 
 // Method to calculate variance between budget and actual
 BudgetSchema.statics.getVarianceAnalysis = async function(residenceId, year) {
-  const JournalLine = mongoose.model('JournalLine');
-  const Account = mongoose.model('Account');
+  try {
+    const JournalLine = mongoose.model('JournalLine');
+    const Account = mongoose.model('Account');
 
-  // Get budget for this year
-  const query = {
-    year: year,
-    budgetType: 'budget'
-  };
-  
-  // Only filter by residence if provided
-  if (residenceId) {
-    query.residence_id = residenceId;
-  }
-  
-  const budgets = await this.find(query);
+    // Get budget for this year
+    const query = {
+      year: year,
+      budgetType: 'budget'
+    };
+    
+    // Only filter by residence if provided
+    if (residenceId) {
+      query.residence_id = residenceId;
+    }
+    
+    const budgets = await this.find(query);
 
-  // Get actual amounts from journal lines
-  const results = [];
+    // Get actual amounts from journal lines
+    const results = [];
 
-  for (const budget of budgets) {
-    const account = await Account.findOne({ number: budget.accountNumber });
-    if (!account) continue;
+    for (const budget of budgets) {
+      const account = await Account.findOne({ number: budget.accountNumber });
+      if (!account) continue;
 
-    // Sum actuals for this account
-    const actualSum = await JournalLine.aggregate([
-      {
-        $lookup: {
-          from: 'journalentries',
-          localField: 'journal_entry',
-          foreignField: '_id',
-          as: 'entry'
-        }
-      },
-      { $unwind: '$entry' },
-      {
-        $match: {
-          accountNumber: budget.accountNumber,
-          'entry.date': {
-            $gte: new Date(year, 0, 1),
-            $lt: new Date(year + 1, 0, 1)
+      // Sum actuals for this account
+      const actualSum = await JournalLine.aggregate([
+        {
+          $lookup: {
+            from: 'journalentries',
+            localField: 'journal_entry',
+            foreignField: '_id',
+            as: 'entry'
+          }
+        },
+        { $unwind: '$entry' },
+        {
+          $match: {
+            accountNumber: budget.accountNumber,
+            'entry.date': {
+              $gte: new Date(year, 0, 1),
+              $lt: new Date(year + 1, 0, 1)
+            }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            totalDebit: { $sum: '$debit' },
+            totalCredit: { $sum: '$credit' }
           }
         }
-      },
-      {
-        $group: {
-          _id: null,
-          totalDebit: { $sum: '$debit' },
-          totalCredit: { $sum: '$credit' }
-        }
-      }
-    ]);
+      ]);
 
-    const actual = actualSum.length > 0 
-      ? (account.normalBalance === 'debit' 
-          ? actualSum[0].totalDebit - actualSum[0].totalCredit
-          : actualSum[0].totalCredit - actualSum[0].totalDebit)
-      : 0;
+      const actual = actualSum.length > 0 
+        ? (account.normalBalance === 'debit' 
+            ? actualSum[0].totalDebit - actualSum[0].totalCredit
+            : actualSum[0].totalCredit - actualSum[0].totalDebit)
+        : 0;
 
-    results.push({
-      accountNumber: budget.accountNumber,
-      accountName: account.name,
-      budgeted: budget.amount,
-      actual: actual,
-      variance: actual - budget.amount,
-      variancePercent: budget.amount !== 0 ? ((actual - budget.amount) / budget.amount * 100).toFixed(2) : 0
-    });
+      results.push({
+        accountNumber: budget.accountNumber,
+        accountName: account.name,
+        budgeted: budget.amount,
+        actual: actual,
+        variance: actual - budget.amount,
+        variancePercent: budget.amount !== 0 ? ((actual - budget.amount) / budget.amount * 100).toFixed(2) : 0
+      });
+    }
+
+    return results;
+  } catch (error) {
+    console.error('Error in getVarianceAnalysis:', error);
+    return [];
   }
-
-  return results;
 };
 
 const Budget = mongoose.model('Budget', BudgetSchema);

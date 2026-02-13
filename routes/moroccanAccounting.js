@@ -11,7 +11,8 @@ import {
   getLoans,
   createLoan,
   getOwnerContributions,
-  createOwnerContribution
+  createOwnerContribution,
+  createBulkContributions
 } from '../controllers/moroccanAccountingController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 
@@ -45,5 +46,6 @@ router.post('/loans', requireRole('union_agent'), createLoan);
 // Owner Contributions Tracking
 router.get('/owner-contributions', getOwnerContributions);
 router.post('/owner-contributions', requireRole('union_agent'), createOwnerContribution);
+router.post('/bulk-contributions', requireRole('union_agent'), createBulkContributions);
 
 export default router;

@@ -601,3 +601,96 @@ export const createOwnerContribution = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+/**
+ * POST /api/accounting/moroccan/bulk-contributions
+ * Create contributions for all units in a building (Law 18.00 Articles 35, 37, 38)
+ */
+export const createBulkContributions = async (req, res) => {
+  try {
+    const { buildingId, contributionType, year, totalAmount, generalAssemblyRef } = req.body;
+    
+    if (!buildingId || !contributionType || !year || !totalAmount) {
+      return res.status(400).json({ error: 'Missing required fields: buildingId, contributionType, year, totalAmount' });
+    }
+
+    // Validate contribution type
+    const validTypes = ['regular', 'special', 'advance'];
+    if (!validTypes.includes(contributionType)) {
+      return res.status(400).json({ error: 'Invalid contribution type. Must be: regular, special, or advance' });
+    }
+
+    // Get all apartments in this building with their ownership percentages
+    const apartments = await Apartment.find({ 
+      building: buildingId,
+      representativeUser: { $exists: true, $ne: null }
+    }).populate('representativeUser');
+
+    if (apartments.length === 0) {
+      return res.status(404).json({ error: 'No apartments found in this building with representative users' });
+    }
+
+    // Calculate total percentage
+    const totalPercentage = apartments.reduce((sum, apt) => sum + (apt.percentage_of_apartment || 0), 0);
+
+    if (totalPercentage === 0) {
+      return res.status(400).json({ error: 'Apartments do not have ownership percentages defined' });
+    }
+
+    // Create contributions for each apartment
+    const contributions = [];
+    const errors = [];
+
+    for (const apartment of apartments) {
+      try {
+        // Calculate this apartment's share based on ownership percentage
+        const percentage = apartment.percentage_of_apartment || 0;
+        const individualAmount = (totalAmount * percentage) / totalPercentage;
+
+        // Check if contribution already exists
+        const existing = await Contribution.findOne({
+          owner: apartment.representativeUser._id,
+          unit: apartment._id,
+          year: parseInt(year),
+          contributionType
+        });
+
+        if (existing) {
+          errors.push(`Contribution already exists for unit ${apartment.unit_code}`);
+          continue;
+        }
+
+        // Create contribution
+        const contribution = new Contribution({
+          owner: apartment.representativeUser._id,
+          unit: apartment._id,
+          year: parseInt(year),
+          contributionType,
+          dueAmount: Math.round(individualAmount * 100) / 100, // Round to 2 decimals
+          paidAmount: 0,
+          remaining: Math.round(individualAmount * 100) / 100,
+          status: 'unpaid',
+          generalAssemblyRef: generalAssemblyRef || `AG-${year}-${contributionType.toUpperCase().substring(0,3)}`
+        });
+
+        await contribution.save();
+        contributions.push(contribution);
+      } catch (error) {
+        errors.push(`Error for unit ${apartment.unit_code}: ${error.message}`);
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      count: contributions.length,
+      contributions,
+      totalAmount: parseFloat(totalAmount),
+      buildingId,
+      contributionType,
+      year,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};

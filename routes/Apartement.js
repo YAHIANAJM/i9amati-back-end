@@ -14,6 +14,8 @@ import {
 const router = express.Router();
 
 // List all apartments for current union agent
+router.get('/', auth, requireRole('union_agent'), listApartments);
+
 router.get('/:id', auth, requireRole('union_agent'), getApartmentById);
 
 router.get('/apartments-inbuilding/:buildingId', auth, requireRole('union_agent'), getApartmentsByBuilding);

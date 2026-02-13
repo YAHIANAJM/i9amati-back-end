@@ -258,6 +258,7 @@ export const listApartments = async (req, res) => {
     // Find apartments where the agent field matches the agent's ID
     const apartments = await Apartment.find({ agent: agent._id })
       .populate('owners', 'name email nationalId status') // Use 'name' from User schema
+      .populate('representativeUser', 'name email') // Populate representative user
       .populate('building', 'building_name'); // Optionally populate building name
 
     res.json(apartments);
