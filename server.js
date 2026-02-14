@@ -22,33 +22,30 @@ dotenv.config(); // Load environment variables
 
 const app = express();
 
-const allowedOrigins = [
-  process.env.FRONTEND_URL
-];
+const allowedOrigins = [process.env.FRONTEND_URL];
 
 app.use(
   cors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) !== -1 || origin.includes("localhost")) {
+      if (
+        allowedOrigins.indexOf(origin) !== -1 ||
+        origin.includes("localhost")
+      ) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
       }
     },
     credentials: true,
-    optionsSuccessStatus: 200
-  })
+    optionsSuccessStatus: 200,
+  }),
 );
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
-
-
-
-
 
 connectDB();
 
@@ -92,8 +89,8 @@ app.use("/api/community", communityFeedRoutes);
 app.use("/api/apartments", apartementRoutes);
 app.use("/api/property-owners", propertyOwnerRoutes);
 app.use("/api/buildings", builldingRoutes);
-app.use("/api/accounting", accountingRoutes);
 app.use("/api/accounting/moroccan", moroccanAccountingRoutes);
+app.use("/api/accounting", accountingRoutes);
 app.use("/api/documents", documentRoutes);
 
 // Register API routes
@@ -123,6 +120,4 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Backend server running on port ${PORT}`);
   console.log(`📡 API endpoints available at http://localhost:${PORT}/api`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
-
-
 });
