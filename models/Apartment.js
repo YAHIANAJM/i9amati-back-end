@@ -22,7 +22,7 @@ const ApartmentSchema = new mongoose.Schema(
 
     // Ownership shares
     percentage_of_apartment: { type: Number, min: 0, max: 100 }, // e.g., 2.5
-    land_share_ratio: { type: String },   // e.g., "1.8%"
+    land_share_ratio: { type: String }, // e.g., "1.8%"
     common_share_ratio: { type: String },
 
     // Building structure
@@ -60,10 +60,18 @@ const ApartmentSchema = new mongoose.Schema(
     representativeUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      // optional: you can leave undefined if no rep, but your logic ensures one exists
     },
+
+    // ✅ STORE AUTO-GENERATED CREDENTIALS (for retrieval by union agents)
+    ownerCredentials: [
+      {
+        owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        email: { type: String },
+        password: { type: String }, // Plaintext password (CIN) for retrieval
+      },
+    ],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export default mongoose.model("Apartment", ApartmentSchema);

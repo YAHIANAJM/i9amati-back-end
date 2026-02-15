@@ -1,30 +1,47 @@
 // ========================================
 // FILE 2: backend/routes/apartmentRoutes.js
 // ========================================
-import express from 'express';
-import { auth, requireRole } from '../middleware/auth.js';
+import express from "express";
+import { auth, requireRole } from "../middleware/auth.js";
 import {
   getApartmentsByBuilding,
   listApartments,
   deleteApartment,
   editApartment,
-  getApartmentById
-} from '../controllers/apartmentController.js';
+  getApartmentById,
+  createApartmentForBuilding,
+} from "../controllers/apartmentController.js";
 
 const router = express.Router();
 
 // List all apartments for current union agent
-router.get('/', auth, requireRole('union_agent'), listApartments);
+router.get("/", auth, requireRole("union_agent"), listApartments);
 
-router.get('/:id', auth, requireRole('union_agent'), getApartmentById);
+router.get("/:id", auth, requireRole("union_agent"), getApartmentById);
 
-router.get('/apartments-inbuilding/:buildingId', auth, requireRole('union_agent'), getApartmentsByBuilding);
+router.get(
+  "/apartments-inbuilding/:buildingId",
+  auth,
+  requireRole("union_agent"),
+  getApartmentsByBuilding,
+);
 
 // Delete apartment
-router.delete('/:apartmentId', auth, requireRole('union_agent'), deleteApartment);
+router.delete(
+  "/:apartmentId",
+  auth,
+  requireRole("union_agent"),
+  deleteApartment,
+);
 
 // Edit apartment details
-router.post('/edit', auth, requireRole('union_agent'), editApartment);
+// Create new apartment for building
+router.post(
+  "/createApartmentForBuilding",
+  auth,
+  requireRole("union_agent"),
+  createApartmentForBuilding,
+);
 
 // Manage residents
 //router.post('/residents/add', auth, requireRole('union_agent'), addResident);
