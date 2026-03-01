@@ -187,11 +187,16 @@ export const createOwnerForApartment = async (req, res) => {
     const nationalId = owner.nationalId.trim();
 
     // Generate system email
-    const buildingName = apt.building?.building_name || "building";
-    const emailLocal =
-      `${(apt.unit_code || "apt").toLowerCase()}.${buildingName.toLowerCase()}.${firstName.toLowerCase()}`
-        .replace(/\s+/g, "")
-        .replace(/[^a-z0-9.\-@]/g, "");
+    const buildingName = apt.building?.building_name || "";
+    const emailParts = [
+      (apt.unit_code || "apt").toLowerCase(),
+      buildingName.toLowerCase(),
+      firstName.toLowerCase(),
+    ]
+      .map((p) => p.replace(/[^a-z0-9]/g, ""))
+      .filter(Boolean);
+
+    const emailLocal = emailParts.join(".");
     const generatedEmail = `${emailLocal}@owner.com`;
 
     let representativeUser = null;

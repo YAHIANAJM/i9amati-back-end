@@ -1,30 +1,31 @@
-import express from 'express';
-import multer from 'multer';
-import path from 'path';
-import { auth } from '../middleware/auth.js';
-import Document from '../models/Document.js';
-import documentAccessControl from '../services/documentAccessControl.js';
-import documentWorkflowService from '../services/documentWorkflowService.js';
-import documentVersioningService from '../services/documentVersioningService.js';
-import documentNotificationService from '../services/documentNotificationService.js';
-import documentController from '../controllers/documentController.js';
-import { v2 as cloudinary } from 'cloudinary';
-import crypto from 'crypto';
-import streamifier from 'streamifier';
+import express from "express";
+import multer from "multer";
+import path from "path";
+import { auth } from "../middleware/auth.js";
+import Document from "../models/Document.js";
+import documentAccessControl from "../services/documentAccessControl.js";
+import documentWorkflowService from "../services/documentWorkflowService.js";
+import documentVersioningService from "../services/documentVersioningService.js";
+import documentNotificationService from "../services/documentNotificationService.js";
+import documentController from "../controllers/documentController.js";
+import { v2 as cloudinary } from "cloudinary";
+import crypto from "crypto";
+import streamifier from "streamifier";
 
 const router = express.Router();
+console.log("[Module] 📂 Document routes loaded");
 
 // Configure Cloudinary
-const cloudinaryConfigured = 
-  process.env.CLOUDINARY_CLOUD_NAME && 
-  process.env.CLOUDINARY_API_KEY && 
+const cloudinaryConfigured =
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
   process.env.CLOUDINARY_API_SECRET;
 
 if (cloudinaryConfigured) {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
     api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
+    api_secret: process.env.CLOUDINARY_API_SECRET,
   });
 }
 
@@ -32,29 +33,35 @@ if (cloudinaryConfigured) {
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024 // 50MB limit
+    fileSize: 50 * 1024 * 1024, // 50MB limit
   },
   fileFilter: (req, file, cb) => {
     // Allow common document types
     const allowedTypes = /pdf|doc|docx|xls|xlsx|ppt|pptx|txt|jpg|jpeg|png/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const extname = allowedTypes.test(
+      path.extname(file.originalname).toLowerCase(),
+    );
     const mimetype = allowedTypes.test(file.mimetype);
 
     if (extname && mimetype) {
       return cb(null, true);
     } else {
-      cb(new Error('Invalid file type. Allowed: PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, JPG, PNG'));
+      cb(
+        new Error(
+          "Invalid file type. Allowed: PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, JPG, PNG",
+        ),
+      );
     }
-  }
+  },
 });
 
 /**
  * GET /api/documents - List accessible documents
  */
-router.get('/', auth, async (req, res) => {
+router.get("/", auth, async (req, res) => {
   try {
     const { category, status, apartment_id } = req.query;
-    
+
     const filters = {};
     if (category) filters.category = category;
     if (apartment_id) filters.apartment_id = apartment_id;
@@ -62,16 +69,16 @@ router.get('/', auth, async (req, res) => {
     const documents = await documentAccessControl.getAccessibleDocuments(
       req.user.id,
       req.user.role,
-      filters
+      filters,
     );
 
     res.json({
       success: true,
       count: documents.length,
-      documents
+      documents,
     });
   } catch (error) {
-    console.error('Error listing documents:', error);
+    console.error("Error listing documents:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -79,34 +86,39 @@ router.get('/', auth, async (req, res) => {
 /**
  * GET /api/documents/stats - Get dashboard statistics
  */
-router.get('/stats', auth, documentController.getDashboardStats);
+router.get("/stats", auth, documentController.getDashboardStats);
 
 /**
  * GET /api/documents/search - Search documents
  */
-router.get('/search', auth, documentController.searchDocuments);
+router.get("/search", auth, documentController.searchDocuments);
 
 /**
  * GET /api/documents/pending - Get pending reviews (agents only)
  */
-router.get('/pending', auth, documentController.getPendingReviews);
+router.get("/pending", auth, documentController.getPendingReviews);
 
 /**
  * GET /api/documents/analytics - Get analytics
  */
-router.get('/analytics', auth, documentController.getDocumentAnalytics);
+router.get("/analytics", auth, documentController.getDocumentAnalytics);
 
 /**
  * POST /api/documents/upload - Upload new document
  */
-router.post('/upload', auth, upload.single('file'), async (req, res) => {
+router.post("/upload", auth, upload.single("file"), async (req, res) => {
+  console.log(
+    `[Route] 🚀 Upload request received. File: ${req.file?.originalname}, User: ${req.user?.id}`,
+  );
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
     if (!cloudinaryConfigured) {
-      return res.status(503).json({ error: 'File upload service not configured' });
+      return res
+        .status(503)
+        .json({ error: "File upload service not configured" });
     }
 
     // Upload to Cloudinary
@@ -114,15 +126,15 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
       const fileExt = path.extname(req.file.originalname);
       const uploadStream = cloudinary.uploader.upload_stream(
         {
-          resource_type: 'auto',
-          folder: 'documents',
-          public_id: `doc_${Date.now()}_${Math.round(Math.random() * 1E9)}${fileExt}`,
-          type: 'upload'
+          resource_type: "auto",
+          folder: "documents",
+          public_id: `doc_${Date.now()}_${Math.round(Math.random() * 1e9)}${fileExt}`,
+          type: "upload",
         },
         (error, result) => {
           if (error) reject(error);
           else resolve(result);
-        }
+        },
       );
       streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
     });
@@ -130,12 +142,22 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
     const metadata = {
       title: req.body.title || req.file.originalname,
       description: req.body.description,
-      category: req.body.category || 'Other',
-      access_level: req.body.access_level || 'owner_only',
+      category: req.body.category || "Other",
+      access_level: req.body.access_level || "owner_only",
       apartment_id: req.body.apartment_id,
-      is_sensitive: req.body.is_sensitive === 'true',
-      tags: req.body.tags ? JSON.parse(req.body.tags) : []
+      is_sensitive: req.body.is_sensitive === "true",
+      tags: req.body.tags ? JSON.parse(req.body.tags) : [],
+      allowed_users: req.body.allowed_users
+        ? JSON.parse(req.body.allowed_users)
+        : [],
     };
+
+    console.log(`[Route] 📋 Metadata prepared:`, {
+      title: metadata.title,
+      access_level: metadata.access_level,
+      apartment_id: metadata.apartment_id,
+      allowed_users_count: metadata.allowed_users.length,
+    });
 
     const fileData = {
       path: uploadResult.public_id,
@@ -143,22 +165,27 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
       resourceType: uploadResult.resource_type,
       size: req.file.size,
       mimetype: req.file.mimetype,
-      originalname: req.file.originalname
+      originalname: req.file.originalname,
     };
 
     const result = await documentWorkflowService.uploadDocument(
       fileData,
       metadata,
-      req.user.id
+      req.user.id,
     );
 
     if (result.success) {
+      console.log(
+        `[Route] 📄 Document uploaded successfully. Triggering notifications for ID: ${result.document._id}`,
+      );
+      // Trigger notification
+      await documentNotificationService.notifyDocumentUploaded(result.document);
       res.status(201).json(result);
     } else {
       res.status(400).json(result);
     }
   } catch (error) {
-    console.error('Error uploading document:', error);
+    console.error("Error uploading document:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -166,11 +193,11 @@ router.post('/upload', auth, upload.single('file'), async (req, res) => {
 /**
  * POST /api/documents/:id/submit - Submit document for review
  */
-router.post('/:id/submit', auth, async (req, res) => {
+router.post("/:id/submit", auth, async (req, res) => {
   try {
     const result = await documentWorkflowService.submitForReview(
       req.params.id,
-      req.user.id
+      req.user.id,
     );
 
     if (result.success) {
@@ -179,7 +206,7 @@ router.post('/:id/submit', auth, async (req, res) => {
       res.status(400).json(result);
     }
   } catch (error) {
-    console.error('Error submitting document:', error);
+    console.error("Error submitting document:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -187,25 +214,25 @@ router.post('/:id/submit', auth, async (req, res) => {
 /**
  * POST /api/documents/:id/approve - Approve document
  */
-router.post('/:id/approve', auth, async (req, res) => {
+router.post("/:id/approve", auth, async (req, res) => {
   try {
     const { signature, comments } = req.body;
 
     const result = await documentWorkflowService.approveDocument(
       req.params.id,
       req.user.id,
-      { signature, comments }
+      { signature, comments },
     );
 
     if (result.success) {
       // Send approval notification
       const document = result.document;
-      const User = (await import('../models/User.js')).default;
+      const User = (await import("../models/User.js")).default;
       const approver = await User.findById(req.user.id);
-      
+
       await documentNotificationService.notifyDocumentApproved(
         document,
-        approver.name
+        approver.name,
       );
 
       res.json(result);
@@ -213,7 +240,7 @@ router.post('/:id/approve', auth, async (req, res) => {
       res.status(400).json(result);
     }
   } catch (error) {
-    console.error('Error approving document:', error);
+    console.error("Error approving document:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -221,30 +248,30 @@ router.post('/:id/approve', auth, async (req, res) => {
 /**
  * POST /api/documents/:id/reject - Reject document
  */
-router.post('/:id/reject', auth, async (req, res) => {
+router.post("/:id/reject", auth, async (req, res) => {
   try {
     const { reason } = req.body;
 
     if (!reason) {
-      return res.status(400).json({ error: 'Rejection reason is required' });
+      return res.status(400).json({ error: "Rejection reason is required" });
     }
 
     const result = await documentWorkflowService.rejectDocument(
       req.params.id,
       req.user.id,
-      reason
+      reason,
     );
 
     if (result.success) {
       // Send rejection notification
       const document = result.document;
-      const User = (await import('../models/User.js')).default;
+      const User = (await import("../models/User.js")).default;
       const reviewer = await User.findById(req.user.id);
-      
+
       await documentNotificationService.notifyDocumentRejected(
         document,
         reviewer.name,
-        reason
+        reason,
       );
 
       res.json(result);
@@ -252,7 +279,7 @@ router.post('/:id/reject', auth, async (req, res) => {
       res.status(400).json(result);
     }
   } catch (error) {
-    console.error('Error rejecting document:', error);
+    console.error("Error rejecting document:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -260,22 +287,24 @@ router.post('/:id/reject', auth, async (req, res) => {
 /**
  * POST /api/documents/:id/publish - Publish approved document
  */
-router.post('/:id/publish', auth, async (req, res) => {
+router.post("/:id/publish", auth, async (req, res) => {
   try {
     const result = await documentWorkflowService.publishDocument(
       req.params.id,
-      req.user.id
+      req.user.id,
     );
 
     if (result.success) {
       // Send publication notification
-      await documentNotificationService.notifyDocumentPublished(result.document);
+      await documentNotificationService.notifyDocumentPublished(
+        result.document,
+      );
       res.json(result);
     } else {
       res.status(400).json(result);
     }
   } catch (error) {
-    console.error('Error publishing document:', error);
+    console.error("Error publishing document:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -283,36 +312,36 @@ router.post('/:id/publish', auth, async (req, res) => {
 /**
  * GET /api/documents/:id - Get document details
  */
-router.get('/:id', auth, async (req, res) => {
+router.get("/:id", auth, async (req, res) => {
   try {
     // Check access
     const hasAccess = await documentAccessControl.canAccessDocument(
       req.params.id,
       req.user.id,
-      req.user.role
+      req.user.role,
     );
 
     if (!hasAccess) {
-      return res.status(403).json({ error: 'Access denied' });
+      return res.status(403).json({ error: "Access denied" });
     }
 
     const document = await Document.findById(req.params.id)
-      .populate('uploaded_by', 'name role email')
-      .populate('approved_by', 'name role')
-      .populate('last_modified_by', 'name role')
-      .populate('apartment_id', 'number building_id')
+      .populate("uploaded_by", "name role email")
+      .populate("approved_by", "name role")
+      .populate("last_modified_by", "name role")
+      .populate("apartment_id", "number building_id")
       .lean();
 
     if (!document) {
-      return res.status(404).json({ error: 'Document not found' });
+      return res.status(404).json({ error: "Document not found" });
     }
 
     res.json({
       success: true,
-      document
+      document,
     });
   } catch (error) {
-    console.error('Error getting document:', error);
+    console.error("Error getting document:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -320,17 +349,19 @@ router.get('/:id', auth, async (req, res) => {
 /**
  * GET /api/documents/:id/versions - Get version history
  */
-router.get('/:id/versions', auth, async (req, res) => {
+router.get("/:id/versions", auth, async (req, res) => {
   try {
-    const result = await documentVersioningService.getVersionHistory(req.params.id);
-    
+    const result = await documentVersioningService.getVersionHistory(
+      req.params.id,
+    );
+
     if (result.success) {
       res.json(result);
     } else {
       res.status(404).json(result);
     }
   } catch (error) {
-    console.error('Error getting versions:', error);
+    console.error("Error getting versions:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -338,12 +369,12 @@ router.get('/:id/versions', auth, async (req, res) => {
 /**
  * POST /api/documents/:id/restore/:version - Restore previous version
  */
-router.post('/:id/restore/:version', auth, async (req, res) => {
+router.post("/:id/restore/:version", auth, async (req, res) => {
   try {
     const result = await documentVersioningService.restoreVersion(
       req.params.id,
       parseInt(req.params.version),
-      req.user.id
+      req.user.id,
     );
 
     if (result.success) {
@@ -352,7 +383,7 @@ router.post('/:id/restore/:version', auth, async (req, res) => {
       res.status(400).json(result);
     }
   } catch (error) {
-    console.error('Error restoring version:', error);
+    console.error("Error restoring version:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -360,52 +391,58 @@ router.post('/:id/restore/:version', auth, async (req, res) => {
 /**
  * GET /api/documents/:id/download - Download document
  */
-router.get('/:id/download', auth, async (req, res) => {
+router.get("/:id/download", auth, async (req, res) => {
   try {
     // Check access
     const hasAccess = await documentAccessControl.canAccessDocument(
       req.params.id,
       req.user.id,
-      req.user.role
+      req.user.role,
     );
 
     if (!hasAccess) {
-      return res.status(403).json({ error: 'Access denied' });
+      return res.status(403).json({ error: "Access denied" });
     }
 
     const document = await Document.findById(req.params.id);
     if (!document) {
-      return res.status(404).json({ error: 'Document not found' });
+      return res.status(404).json({ error: "Document not found" });
     }
 
     if (!cloudinaryConfigured) {
-      return res.status(503).json({ error: 'File download service not configured' });
+      return res
+        .status(503)
+        .json({ error: "File download service not configured" });
     }
 
     // Generate signed download URL
     const publicId = document.file_path;
     const timestamp = Math.round(Date.now() / 1000);
     const filename = document.title;
-    
+
     const params = {
-      attachment: 'true',
+      attachment: "true",
       public_id: publicId,
       target_filename: filename,
       timestamp: timestamp.toString(),
-      type: 'upload'
+      type: "upload",
     };
-    
+
     const sortedParams = Object.keys(params)
       .sort()
-      .map(key => `${key}=${params[key]}`)
-      .join('&');
-    
+      .map((key) => `${key}=${params[key]}`)
+      .join("&");
+
     const stringToSign = sortedParams + process.env.CLOUDINARY_API_SECRET;
-    const signature = crypto.createHash('sha256').update(stringToSign).digest('hex');
-    
+    const signature = crypto
+      .createHash("sha256")
+      .update(stringToSign)
+      .digest("hex");
+
     // Use stored resource_type or default to 'raw' for documents
-    const resourceType = document.resource_type || 'raw';
-    const downloadUrl = `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/download?` +
+    const resourceType = document.resource_type || "raw";
+    const downloadUrl =
+      `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/download?` +
       `api_key=${process.env.CLOUDINARY_API_KEY}&` +
       `attachment=true&` +
       `public_id=${encodeURIComponent(publicId)}&` +
@@ -416,7 +453,7 @@ router.get('/:id/download', auth, async (req, res) => {
 
     res.json({ url: downloadUrl });
   } catch (error) {
-    console.error('Error downloading document:', error);
+    console.error("Error downloading document:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -424,51 +461,57 @@ router.get('/:id/download', auth, async (req, res) => {
 /**
  * GET /api/documents/:id/view - View document without downloading
  */
-router.get('/:id/view', auth, async (req, res) => {
+router.get("/:id/view", auth, async (req, res) => {
   try {
     // Check access
     const hasAccess = await documentAccessControl.canAccessDocument(
       req.params.id,
       req.user.id,
-      req.user.role
+      req.user.role,
     );
 
     if (!hasAccess) {
-      return res.status(403).json({ error: 'Access denied' });
+      return res.status(403).json({ error: "Access denied" });
     }
 
     const document = await Document.findById(req.params.id);
     if (!document) {
-      return res.status(404).json({ error: 'Document not found' });
+      return res.status(404).json({ error: "Document not found" });
     }
 
     if (!cloudinaryConfigured) {
-      return res.status(503).json({ error: 'File view service not configured' });
+      return res
+        .status(503)
+        .json({ error: "File view service not configured" });
     }
 
     // Generate signed URL for viewing (without attachment parameter, with inline flag)
     const publicId = document.file_path;
     const timestamp = Math.round(Date.now() / 1000);
-    
+
     const params = {
       public_id: publicId,
       timestamp: timestamp.toString(),
-      type: 'upload'
+      type: "upload",
     };
-    
+
     const sortedParams = Object.keys(params)
       .sort()
-      .map(key => `${key}=${params[key]}`)
-      .join('&');
-    
+      .map((key) => `${key}=${params[key]}`)
+      .join("&");
+
     const stringToSign = sortedParams + process.env.CLOUDINARY_API_SECRET;
-    const signature = crypto.createHash('sha256').update(stringToSign).digest('hex');
-    
+    const signature = crypto
+      .createHash("sha256")
+      .update(stringToSign)
+      .digest("hex");
+
     // Use stored resource_type or default to 'raw' for documents
-    const resourceType = document.resource_type || 'raw';
-    
+    const resourceType = document.resource_type || "raw";
+
     // Build URL with fl_attachment flag set to false for inline viewing
-    const viewUrl = `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/download?` +
+    const viewUrl =
+      `https://api.cloudinary.com/v1_1/${process.env.CLOUDINARY_CLOUD_NAME}/${resourceType}/download?` +
       `api_key=${process.env.CLOUDINARY_API_KEY}&` +
       `public_id=${encodeURIComponent(publicId)}&` +
       `signature=${signature}&` +
@@ -477,7 +520,7 @@ router.get('/:id/view', auth, async (req, res) => {
 
     res.json({ url: viewUrl });
   } catch (error) {
-    console.error('Error viewing document:', error);
+    console.error("Error viewing document:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -485,17 +528,19 @@ router.get('/:id/view', auth, async (req, res) => {
 /**
  * GET /api/documents/:id/workflow-history - Get workflow history
  */
-router.get('/:id/workflow-history', auth, async (req, res) => {
+router.get("/:id/workflow-history", auth, async (req, res) => {
   try {
-    const result = await documentWorkflowService.getWorkflowHistory(req.params.id);
-    
+    const result = await documentWorkflowService.getWorkflowHistory(
+      req.params.id,
+    );
+
     if (result.success) {
       res.json(result);
     } else {
       res.status(404).json(result);
     }
   } catch (error) {
-    console.error('Error getting workflow history:', error);
+    console.error("Error getting workflow history:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -503,23 +548,25 @@ router.get('/:id/workflow-history', auth, async (req, res) => {
 /**
  * PUT /api/documents/:id/permissions - Update document permissions
  */
-router.put('/:id/permissions', auth, async (req, res) => {
+router.put("/:id/permissions", auth, async (req, res) => {
   try {
     // Only agents can modify permissions
-    if (req.user.role !== 'union_agent') {
-      return res.status(403).json({ error: 'Only union agents can modify permissions' });
+    if (req.user.role !== "union_agent") {
+      return res
+        .status(403)
+        .json({ error: "Only union agents can modify permissions" });
     }
 
     const permissions = {
       access_level: req.body.access_level,
       allowed_users: req.body.allowed_users,
       allowed_roles: req.body.allowed_roles,
-      apartment_id: req.body.apartment_id
+      apartment_id: req.body.apartment_id,
     };
 
     const result = await documentAccessControl.setDocumentPermissions(
       req.params.id,
-      permissions
+      permissions,
     );
 
     if (result.success) {
@@ -528,7 +575,7 @@ router.put('/:id/permissions', auth, async (req, res) => {
       res.status(400).json(result);
     }
   } catch (error) {
-    console.error('Error updating permissions:', error);
+    console.error("Error updating permissions:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -536,16 +583,18 @@ router.put('/:id/permissions', auth, async (req, res) => {
 /**
  * DELETE /api/documents/:id - Archive document
  */
-router.delete('/:id', auth, async (req, res) => {
+router.delete("/:id", auth, async (req, res) => {
   try {
     // Only agents can archive
-    if (req.user.role !== 'union_agent') {
-      return res.status(403).json({ error: 'Only union agents can archive documents' });
+    if (req.user.role !== "union_agent") {
+      return res
+        .status(403)
+        .json({ error: "Only union agents can archive documents" });
     }
 
     const document = await Document.findById(req.params.id);
     if (!document) {
-      return res.status(404).json({ error: 'Document not found' });
+      return res.status(404).json({ error: "Document not found" });
     }
 
     document.is_archived = true;
@@ -555,10 +604,10 @@ router.delete('/:id', auth, async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Document archived successfully'
+      message: "Document archived successfully",
     });
   } catch (error) {
-    console.error('Error archiving document:', error);
+    console.error("Error archiving document:", error);
     res.status(500).json({ error: error.message });
   }
 });

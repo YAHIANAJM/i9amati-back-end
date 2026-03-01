@@ -1,5 +1,6 @@
-import Notification from '../models/Notification.js';
-import documentAccessControl from './documentAccessControl.js';
+import Notification from "../models/Notification.js";
+import documentAccessControl from "./documentAccessControl.js";
+import emailService from "./emailService.js";
 
 /**
  * Document Notification Service
@@ -11,37 +12,72 @@ class DocumentNotificationService {
    * @param {Object} document - Document object
    */
   async notifyDocumentUploaded(document) {
+    console.log(
+      `[Service] 🔔 notifyDocumentUploaded called for document: ${document._id}`,
+    );
     try {
-      const usersToNotify = await documentAccessControl.getUsersToNotify(document);
+      const usersToNotify =
+        await documentAccessControl.getUsersToNotify(document);
+      console.log(
+        `[Notification] 🔍 Found ${usersToNotify.length} user(s) to notify for document: "${document.title}"`,
+      );
+      console.log(
+        `[Notification] 📋 FULL RECIPIENT LIST: ${usersToNotify.map((u) => u.email).join(", ")}`,
+      );
 
       const notifications = [];
-      for (const user of usersToNotify) {
-        const notification = new Notification({
-          user: user._id,
-          title: 'مستند جديد - New Document',
-          message: `تم رفع مستند جديد: ${document.title} (${document.category})`,
-          message_en: `New document uploaded: ${document.title} (${document.category})`,
-          type: 'document',
-          reference_id: document._id,
-          reference_type: 'Document',
-          priority: document.is_sensitive ? 'high' : 'normal',
-          status: 'unread'
-        });
 
-        await notification.save();
-        notifications.push(notification);
+      for (const user of usersToNotify) {
+        console.log(
+          `[Notification] 👤 Notifying User: ${user.name} (${user.email || "No Email"})`,
+        );
+
+        // Create platform notification only if user has an account (has an _id)
+        if (user._id) {
+          const notification = new Notification({
+            user: user._id,
+            title: "مستند جديد - New Document",
+            message: `تم رفع مستند جديد: ${document.title} (${document.category})`,
+            message_en: `New document uploaded: ${document.title} (${document.category})`,
+            type: "document",
+            reference_id: document._id,
+            reference_type: "Document",
+            priority: document.is_sensitive ? "high" : "normal",
+            status: "unread",
+          });
+
+          await notification.save();
+          notifications.push(notification);
+          console.log(
+            `[Notification] 🔔 Created platform notification for: ${user.name} (${user.email})`,
+          );
+        } else {
+          console.log(
+            `[Notification] 📧 Skipping platform notification for mock recipient (no account): ${user.name} (${user.email})`,
+          );
+        }
+
+        // Send email notification regardless of whether a platform notification was created
+        if (user.email) {
+          console.log(`[Email] 📧 Attempting to send email to: ${user.email}`);
+          await emailService.sendDocumentNotification(user, document);
+        } else {
+          console.log(
+            `[Email] ⚠️ User ${user.name} has no email address. Skipping email.`,
+          );
+        }
       }
 
       return {
         success: true,
         notifications_sent: notifications.length,
-        message: `${notifications.length} notifications sent`
+        message: `${notifications.length} notifications sent and emails queued`,
       };
     } catch (error) {
-      console.error('Error notifying document uploaded:', error);
+      console.error("Error notifying document uploaded:", error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -54,26 +90,27 @@ class DocumentNotificationService {
    */
   async notifyDocumentModified(document, modifierName, changeSummary) {
     try {
-      const usersToNotify = await documentAccessControl.getUsersToNotify(document);
+      const usersToNotify =
+        await documentAccessControl.getUsersToNotify(document);
 
       const notifications = [];
       for (const user of usersToNotify) {
         const notification = new Notification({
           user: user._id,
-          title: 'تحديث مستند - Document Updated',
+          title: "تحديث مستند - Document Updated",
           message: `تم تعديل المستند: ${document.title}\nبواسطة: ${modifierName}\nالتغييرات: ${changeSummary}`,
           message_en: `Document updated: ${document.title}\nBy: ${modifierName}\nChanges: ${changeSummary}`,
-          type: 'document',
+          type: "document",
           reference_id: document._id,
-          reference_type: 'Document',
-          priority: document.is_sensitive ? 'high' : 'normal',
-          status: 'unread',
+          reference_type: "Document",
+          priority: document.is_sensitive ? "high" : "normal",
+          status: "unread",
           metadata: {
             document_title: document.title,
             category: document.category,
             modifier: modifierName,
-            change_summary: changeSummary
-          }
+            change_summary: changeSummary,
+          },
         });
 
         await notification.save();
@@ -82,29 +119,31 @@ class DocumentNotificationService {
 
       // If sensitive document, also notify all agents
       if (document.is_sensitive) {
-        const User = (await import('../models/User.js')).default;
-        const agents = await User.find({ role: 'union_agent' });
+        const User = (await import("../models/User.js")).default;
+        const agents = await User.find({ role: "union_agent" });
 
         for (const agent of agents) {
           // Skip if already notified
-          if (usersToNotify.some(u => u._id.toString() === agent._id.toString())) {
+          if (
+            usersToNotify.some((u) => u._id.toString() === agent._id.toString())
+          ) {
             continue;
           }
 
           const notification = new Notification({
             user: agent._id,
-            title: '⚠️ مستند حساس محدث - Sensitive Document Updated',
+            title: "⚠️ مستند حساس محدث - Sensitive Document Updated",
             message: `تم تحديث مستند حساس: ${document.title} (${document.category})`,
             message_en: `Sensitive document updated: ${document.title} (${document.category})`,
-            type: 'alert',
+            type: "alert",
             reference_id: document._id,
-            reference_type: 'Document',
-            priority: 'high',
-            status: 'unread',
+            reference_type: "Document",
+            priority: "high",
+            status: "unread",
             metadata: {
               is_sensitive: true,
-              category: document.category
-            }
+              category: document.category,
+            },
           });
 
           await notification.save();
@@ -114,13 +153,13 @@ class DocumentNotificationService {
 
       return {
         success: true,
-        notifications_sent: notifications.length
+        notifications_sent: notifications.length,
       };
     } catch (error) {
-      console.error('Error notifying document modified:', error);
+      console.error("Error notifying document modified:", error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -132,38 +171,38 @@ class DocumentNotificationService {
    */
   async notifyDocumentApproved(document, approverName) {
     try {
-      const User = (await import('../models/User.js')).default;
+      const User = (await import("../models/User.js")).default;
       const uploader = await User.findById(document.uploaded_by);
 
-      if (!uploader) return { success: false, error: 'Uploader not found' };
+      if (!uploader) return { success: false, error: "Uploader not found" };
 
       const notification = new Notification({
         user: uploader._id,
-        title: '✅ تمت الموافقة - Document Approved',
+        title: "✅ تمت الموافقة - Document Approved",
         message: `تمت الموافقة على المستند: ${document.title}\nبواسطة: ${approverName}`,
         message_en: `Document approved: ${document.title}\nBy: ${approverName}`,
-        type: 'success',
+        type: "success",
         reference_id: document._id,
-        reference_type: 'Document',
-        priority: 'normal',
-        status: 'unread',
+        reference_type: "Document",
+        priority: "normal",
+        status: "unread",
         metadata: {
           approver: approverName,
-          signature: document.signature
-        }
+          signature: document.signature,
+        },
       });
 
       await notification.save();
 
       return {
         success: true,
-        notifications_sent: 1
+        notifications_sent: 1,
       };
     } catch (error) {
-      console.error('Error notifying document approved:', error);
+      console.error("Error notifying document approved:", error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -176,38 +215,38 @@ class DocumentNotificationService {
    */
   async notifyDocumentRejected(document, reviewerName, reason) {
     try {
-      const User = (await import('../models/User.js')).default;
+      const User = (await import("../models/User.js")).default;
       const uploader = await User.findById(document.uploaded_by);
 
-      if (!uploader) return { success: false, error: 'Uploader not found' };
+      if (!uploader) return { success: false, error: "Uploader not found" };
 
       const notification = new Notification({
         user: uploader._id,
-        title: '❌ مستند مرفوض - Document Rejected',
+        title: "❌ مستند مرفوض - Document Rejected",
         message: `تم رفض المستند: ${document.title}\nبواسطة: ${reviewerName}\nالسبب: ${reason}`,
         message_en: `Document rejected: ${document.title}\nBy: ${reviewerName}\nReason: ${reason}`,
-        type: 'warning',
+        type: "warning",
         reference_id: document._id,
-        reference_type: 'Document',
-        priority: 'high',
-        status: 'unread',
+        reference_type: "Document",
+        priority: "high",
+        status: "unread",
         metadata: {
           reviewer: reviewerName,
-          reason
-        }
+          reason,
+        },
       });
 
       await notification.save();
 
       return {
         success: true,
-        notifications_sent: 1
+        notifications_sent: 1,
       };
     } catch (error) {
-      console.error('Error notifying document rejected:', error);
+      console.error("Error notifying document rejected:", error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -218,39 +257,54 @@ class DocumentNotificationService {
    */
   async notifyDocumentPublished(document) {
     try {
-      const usersToNotify = await documentAccessControl.getUsersToNotify(document);
+      const usersToNotify =
+        await documentAccessControl.getUsersToNotify(document);
+      console.log(
+        `[Notification] 🔍 Found ${usersToNotify.length} user(s) to notify for PUBLISHED document: "${document.title}"`,
+      );
 
       const notifications = [];
       for (const user of usersToNotify) {
+        console.log(
+          `[Notification] 👤 Notifying User: ${user.name} (${user.email || "No Email"})`,
+        );
         const notification = new Notification({
           user: user._id,
-          title: '📢 مستند منشور - Document Published',
+          title: "📢 مستند منشور - Document Published",
           message: `تم نشر مستند جديد: ${document.title} (${document.category})`,
           message_en: `New document published: ${document.title} (${document.category})`,
-          type: 'info',
+          type: "info",
           reference_id: document._id,
-          reference_type: 'Document',
-          priority: document.is_sensitive ? 'high' : 'normal',
-          status: 'unread',
+          reference_type: "Document",
+          priority: document.is_sensitive ? "high" : "normal",
+          status: "unread",
           metadata: {
             category: document.category,
-            is_sensitive: document.is_sensitive
-          }
+            is_sensitive: document.is_sensitive,
+          },
         });
 
         await notification.save();
         notifications.push(notification);
+
+        // Send email notification
+        if (user.email) {
+          console.log(
+            `[Email] 📧 Attempting to send email for publication to: ${user.email}`,
+          );
+          await emailService.sendDocumentNotification(user, document);
+        }
       }
 
       return {
         success: true,
-        notifications_sent: notifications.length
+        notifications_sent: notifications.length,
       };
     } catch (error) {
-      console.error('Error notifying document published:', error);
+      console.error("Error notifying document published:", error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -263,24 +317,25 @@ class DocumentNotificationService {
    */
   async notifyDocumentRestored(document, versionNumber, restorerName) {
     try {
-      const usersToNotify = await documentAccessControl.getUsersToNotify(document);
+      const usersToNotify =
+        await documentAccessControl.getUsersToNotify(document);
 
       const notifications = [];
       for (const user of usersToNotify) {
         const notification = new Notification({
           user: user._id,
-          title: '🔄 استرجاع نسخة - Version Restored',
+          title: "🔄 استرجاع نسخة - Version Restored",
           message: `تم استرجاع نسخة سابقة من: ${document.title}\nالنسخة: ${versionNumber}\nبواسطة: ${restorerName}`,
           message_en: `Previous version restored: ${document.title}\nVersion: ${versionNumber}\nBy: ${restorerName}`,
-          type: 'info',
+          type: "info",
           reference_id: document._id,
-          reference_type: 'Document',
-          priority: 'high',
-          status: 'unread',
+          reference_type: "Document",
+          priority: "high",
+          status: "unread",
           metadata: {
             version_number: versionNumber,
-            restorer: restorerName
-          }
+            restorer: restorerName,
+          },
         });
 
         await notification.save();
@@ -289,13 +344,13 @@ class DocumentNotificationService {
 
       return {
         success: true,
-        notifications_sent: notifications.length
+        notifications_sent: notifications.length,
       };
     } catch (error) {
-      console.error('Error notifying document restored:', error);
+      console.error("Error notifying document restored:", error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }

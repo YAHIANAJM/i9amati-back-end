@@ -20,65 +20,104 @@ export const getBuildings = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const [buildings, totalCount] = await Promise.all([
-      Building.find()
-        .select(
-          "building_code building_name building_address land_area_sqm avg_units_per_block avg_floors_per_block propertyPlanNumber original_title_number has_garage has_pool hasElevator has_elevator hasSharedParts has_shared_parts_with_other_buildings sharedWithTitleDeed sharedParts total_units number_of_blocks documents description agent apartments createdAt updatedAt",
-        )
-        .skip(skip)
-        .limit(limit)
-        .sort({ createdAt: -1 })
-        .lean(),
-      Building.countDocuments(),
+    const { searchBuilding, searchApartment, searchOwner } = req.query;
+    let query = {};
+
+    // 1. Filter by Building Name or Code
+    if (searchBuilding) {
+      query.$or = [
+        { building_name: { $regex: searchBuilding, $options: "i" } },
+        { building_code: { $regex: searchBuilding, $options: "i" } },
+      ];
+    }
+
+    // 2. Filter by Apartment Code or Owner Name
+    if (searchApartment || searchOwner) {
+      let apartmentQuery = {};
+      if (searchApartment) {
+        apartmentQuery.unit_code = { $regex: searchApartment, $options: "i" };
+      }
+      if (searchOwner) {
+        apartmentQuery.$or = [
+          { "owners.firstName": { $regex: searchOwner, $options: "i" } },
+          { "owners.lastName": { $regex: searchOwner, $options: "i" } },
+        ];
+      }
+
+      const matchingApartments = await Apartment.find(apartmentQuery)
+        .select("building")
+        .lean();
+      const buildingIds = matchingApartments.map((a) => a.building);
+
+      if (query.$or) {
+        // combine with building name search if both provided
+        query = { $and: [query, { _id: { $in: buildingIds } }] };
+      } else {
+        query._id = { $in: buildingIds };
+      }
+    }
+
+    // Use aggregation to get counts efficiently for the paginated set
+    const buildingsData = await Building.aggregate([
+      { $match: query },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: "apartments",
+          localField: "apartments",
+          foreignField: "_id",
+          as: "aptDetails",
+        },
+      },
+      {
+        $addFields: {
+          apartmentCount: { $size: "$apartments" },
+          ownerCount: {
+            $reduce: {
+              input: "$aptDetails",
+              initialValue: 0,
+              in: { $add: ["$$value", { $size: "$$this.owners" }] },
+            },
+          },
+        },
+      },
+      { $project: { aptDetails: 0 } },
     ]);
 
-    console.log(buildings);
+    const totalCount = await Building.countDocuments(query);
 
-    // Map DB fields to API-friendly keys and remove duplicates
-    const normalizedBuildings = buildings.map((b) => ({
+    // Map DB fields to API-friendly keys
+    const normalizedBuildings = buildingsData.map((b) => ({
       _id: b._id,
       building_code: b.building_code || null,
       building_name: b.building_name || null,
       building_address: b.building_address || null,
-
-      // Frontend-friendly aliases
       propertyLandArea: b.land_area_sqm ?? null,
       averageUnitsPerBuilding: b.avg_units_per_block ?? null,
       averageFloorsPerBuilding: b.avg_floors_per_block ?? null,
-
-      // Title / plan
       propertyPlanNumber:
         b.propertyPlanNumber || b.original_title_number || null,
-
-      // Features
       hasGarage: Boolean(b.has_garage),
       hasSwimmingPool: Boolean(b.has_pool),
       hasElevator: Boolean(b.hasElevator || b.has_elevator),
-
-      // Shared parts linking
       hasSharedParts: Boolean(
         b.hasSharedParts || b.has_shared_parts_with_other_buildings,
       ),
       sharedWithTitleDeed: b.sharedWithTitleDeed ?? null,
       sharedParts: b.sharedParts ?? null,
-
-      // Counts
       totalUnits: b.total_units ?? null,
       numberOfBuildings: b.number_of_blocks ?? null,
-
-      // Misc
       documents: b.documents || [],
       description: b.description || null,
       agent: b.agent || null,
       apartments: b.apartments || [],
-
+      apartmentCount: b.apartmentCount || 0,
+      ownerCount: b.ownerCount || 0,
       createdAt: b.createdAt,
       updatedAt: b.updatedAt,
     }));
-
-    console.log(
-      `Fetched ${buildings.length} buildings out of ${totalCount} total.`,
-    );
 
     res.status(200).json({
       success: true,
@@ -87,7 +126,6 @@ export const getBuildings = async (req, res) => {
         currentPage: page,
         totalPages: Math.ceil(totalCount / limit),
         totalBuildings: totalCount,
-        buildingsPerPage: limit,
         hasNextPage: page < Math.ceil(totalCount / limit),
         hasPrevPage: page > 1,
       },
@@ -834,11 +872,9 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
     await session.abortTransaction();
     session.endSession();
     console.error("Error in createBuildingWithMultipleApartments:", error);
-    res
-      .status(500)
-      .json({
-        error: error.message || "Failed to create building and apartments",
-      });
+    res.status(500).json({
+      error: error.message || "Failed to create building and apartments",
+    });
   }
 };
 
@@ -1136,5 +1172,43 @@ export const addApartmentWithOwnersToBuilding = async (req, res) => {
     res
       .status(500)
       .json({ error: error.message || "Failed to add apartment to building" });
+  }
+};
+
+/**
+ * PUT /api/buildings/:buildingId
+ * Update building details
+ */
+export const updateBuilding = async (req, res) => {
+  try {
+    const { buildingId } = req.params;
+    const updateData = req.body;
+
+    // Find and update building. Ensure it belongs to the authenticated agent.
+    const building = await Building.findOneAndUpdate(
+      { _id: buildingId, agent: req.user.id },
+      { $set: updateData },
+      { new: true, runValidators: true },
+    );
+
+    if (!building) {
+      return res.status(404).json({
+        success: false,
+        message: "Building not found or you are not authorized to edit it",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Building updated successfully",
+      data: building,
+    });
+  } catch (error) {
+    console.error("Error updating building:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update building",
+      error: error.message,
+    });
   }
 };

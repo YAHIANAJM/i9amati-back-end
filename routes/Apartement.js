@@ -34,6 +34,8 @@ router.delete(
   deleteApartment,
 );
 
+router.patch("/:apartmentId", auth, requireRole("union_agent"), editApartment);
+
 // Edit apartment details
 // Create new apartment for building
 router.post(

@@ -1,5 +1,6 @@
-import Document from '../models/Document.js';
-import User from '../models/User.js';
+import Document from "../models/Document.js";
+import User from "../models/User.js";
+import Apartment from "../models/Apartment.js";
 
 /**
  * Document Access Control Service
@@ -16,52 +17,56 @@ class DocumentAccessControlService {
   async canAccessDocument(documentId, userId, userRole) {
     try {
       const document = await Document.findById(documentId)
-        .populate('apartment_id')
-        .populate('allowed_users');
+        .populate("apartment_id")
+        .populate("allowed_users");
 
       if (!document) return false;
 
       // Check if document is archived
       if (document.is_archived) {
-        return userRole === 'union_agent'; // Only agents can access archived docs
+        return userRole === "union_agent"; // Only agents can access archived docs
       }
 
       // Check access level
       switch (document.access_level) {
-        case 'public':
+        case "public":
           return true;
 
-        case 'agent_only':
-          return userRole === 'union_agent';
+        case "agent_only":
+          return userRole === "union_agent";
 
-        case 'owner_only':
-          return userRole === 'property_owner' || userRole === 'union_agent';
+        case "owner_only":
+          return userRole === "property_owner" || userRole === "union_agent";
 
-        case 'unit_specific':
+        case "unit_specific":
           // Check if user owns/manages the specific apartment
           if (!document.apartment_id) return false;
-          
+
           const user = await User.findById(userId);
           if (!user) return false;
 
           // Agent can access all unit documents
-          if (userRole === 'union_agent') return true;
+          if (userRole === "union_agent") return true;
 
           // Check if user's apartment matches
-          const userApartmentIds = user.apartments?.map(apt => apt.toString()) || [];
-          return userApartmentIds.includes(document.apartment_id._id.toString());
+          const userApartmentIds =
+            user.apartments?.map((apt) => apt.toString()) || [];
+          return userApartmentIds.includes(
+            document.apartment_id._id.toString(),
+          );
 
-        case 'restricted':
+        case "restricted":
           // Only specific users or agent
-          if (userRole === 'union_agent') return true;
-          const allowedUserIds = document.allowed_users?.map(u => u._id.toString()) || [];
+          if (userRole === "union_agent") return true;
+          const allowedUserIds =
+            document.allowed_users?.map((u) => u._id.toString()) || [];
           return allowedUserIds.includes(userId.toString());
 
         default:
           return false;
       }
     } catch (error) {
-      console.error('Error checking document access:', error);
+      console.error("Error checking document access:", error);
       return false;
     }
   }
@@ -78,7 +83,7 @@ class DocumentAccessControlService {
       if (!document) return false;
 
       // Only union agents can modify documents
-      if (userRole !== 'union_agent') return false;
+      if (userRole !== "union_agent") return false;
 
       // Uploaded by this user
       if (document.uploaded_by.toString() === userId.toString()) return true;
@@ -86,7 +91,7 @@ class DocumentAccessControlService {
       // Or has supervisor privileges
       return true;
     } catch (error) {
-      console.error('Error checking modify permission:', error);
+      console.error("Error checking modify permission:", error);
       return false;
     }
   }
@@ -103,15 +108,15 @@ class DocumentAccessControlService {
       if (!document) return false;
 
       // Only union agents can approve
-      if (userRole !== 'union_agent') return false;
+      if (userRole !== "union_agent") return false;
 
       // Cannot approve own uploads
       if (document.uploaded_by.toString() === userId.toString()) return false;
 
       // Document must be in pending_review status
-      return document.workflow_status === 'pending_review';
+      return document.workflow_status === "pending_review";
     } catch (error) {
-      console.error('Error checking approve permission:', error);
+      console.error("Error checking approve permission:", error);
       return false;
     }
   }
@@ -135,46 +140,46 @@ class DocumentAccessControlService {
       }
 
       // Apply access control
-      if (userRole === 'union_agent') {
+      if (userRole === "union_agent") {
         // Agents can see all non-archived documents
         // No additional query needed
-      } else if (userRole === 'property_owner') {
+      } else if (userRole === "property_owner") {
         // Owners can see public, owner_only, and their unit-specific docs
         const userApartmentIds = user.apartments || [];
-        
+
         query.$or = [
-          { access_level: 'public' },
-          { access_level: 'owner_only' },
-          { 
-            access_level: 'unit_specific', 
-            apartment_id: { $in: userApartmentIds } 
+          { access_level: "public" },
+          { access_level: "owner_only" },
+          {
+            access_level: "unit_specific",
+            apartment_id: { $in: userApartmentIds },
           },
           {
-            access_level: 'restricted',
-            allowed_users: userId
-          }
+            access_level: "restricted",
+            allowed_users: userId,
+          },
         ];
       } else {
         // Other roles: public only
-        query.access_level = 'public';
+        query.access_level = "public";
       }
 
       // Only published documents (unless agent)
-      if (userRole !== 'union_agent') {
-        query.workflow_status = 'published';
+      if (userRole !== "union_agent") {
+        query.workflow_status = "published";
       }
 
       const documents = await Document.find(query)
-        .populate('uploaded_by', 'name role')
-        .populate('last_modified_by', 'name role')
-        .populate('approved_by', 'name role')
-        .populate('apartment_id', 'number building_id')
+        .populate("uploaded_by", "name role")
+        .populate("last_modified_by", "name role")
+        .populate("approved_by", "name role")
+        .populate("apartment_id", "number building_id")
         .sort({ uploaded_at: -1 })
         .lean();
 
       return documents;
     } catch (error) {
-      console.error('Error getting accessible documents:', error);
+      console.error("Error getting accessible documents:", error);
       return [];
     }
   }
@@ -186,7 +191,8 @@ class DocumentAccessControlService {
    */
   async setDocumentPermissions(documentId, permissions) {
     try {
-      const { access_level, allowed_users, allowed_roles, apartment_id } = permissions;
+      const { access_level, allowed_users, allowed_roles, apartment_id } =
+        permissions;
 
       const updateData = {};
 
@@ -209,18 +215,18 @@ class DocumentAccessControlService {
       const document = await Document.findByIdAndUpdate(
         documentId,
         updateData,
-        { new: true }
+        { new: true },
       );
 
       return {
         success: true,
-        document
+        document,
       };
     } catch (error) {
-      console.error('Error setting document permissions:', error);
+      console.error("Error setting document permissions:", error);
       return {
         success: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -229,7 +235,7 @@ class DocumentAccessControlService {
    * Check if document is sensitive (triggers notifications)
    */
   isSensitiveDocument(category) {
-    const sensitiveCategories = ['Legal', 'Contract', 'Financial'];
+    const sensitiveCategories = ["Legal", "Contract", "Financial"];
     return sensitiveCategories.includes(category);
   }
 
@@ -239,39 +245,102 @@ class DocumentAccessControlService {
    */
   async getUsersToNotify(document) {
     try {
+      console.log(
+        `[AccessControl] 🎯 Resolving recipients for: "${document.title}" (Access: ${document.access_level})`,
+      );
       const usersToNotify = [];
 
-      // If unit-specific, notify apartment owners
-      if (document.apartment_id) {
+      // 1. Priority: Specifically Allowed Users (Selected in UI)
+      if (document.allowed_users && document.allowed_users.length > 0) {
+        console.log(
+          `[AccessControl] 👥 Sector: Specifically Allowed Users (${document.allowed_users.length})`,
+        );
+        for (const targetId of document.allowed_users) {
+          // Try handling as User ID first (actual platform account)
+          let user = await User.findById(targetId);
+
+          if (!user) {
+            // Check if it's an embedded owner ID in an apartment
+            const aptWithOwner = await Apartment.findOne({
+              "owners._id": targetId,
+            });
+            if (aptWithOwner) {
+              const owner = aptWithOwner.owners.id(targetId);
+              console.log(
+                `[AccessControl] 🔍 Found embedded owner record: ${owner.firstName} ${owner.lastName}`,
+              );
+
+              // CRITICAL: Try to find a real User account by nationalId (most reliable) or email
+              user = await User.findOne({
+                $or: [{ nationalId: owner.nationalId }, { email: owner.email }],
+              });
+
+              if (!user) {
+                console.log(
+                  `[AccessControl] ⚠️ No User account found for ${owner.nationalId} / ${owner.email}. Using embedded info.`,
+                );
+                // Return a mock user object with the embedded email
+                user = {
+                  _id: null,
+                  name: `${owner.firstName} ${owner.lastName}`,
+                  email: owner.email,
+                };
+              } else {
+                console.log(
+                  `[AccessControl] ✅ Found User account: ${user.email}`,
+                );
+              }
+            } else {
+              console.log(
+                `[AccessControl] ❌ Could not resolve target ID: ${targetId}`,
+              );
+            }
+          }
+
+          if (user && user.email) usersToNotify.push(user);
+        }
+      }
+      // 2. Secondary: Unit Specific
+      else if (document.apartment_id) {
+        console.log(
+          `[AccessControl] 🏢 Sector: Unit Specific (${document.apartment_id})`,
+        );
         const owners = await User.find({
           apartments: document.apartment_id,
-          role: 'property_owner'
+          role: "property_owner",
         });
+        console.log(`[AccessControl] ✅ Found ${owners.length} unit owner(s)`);
         usersToNotify.push(...owners);
       }
-
-      // If restricted, notify allowed users
-      if (document.access_level === 'restricted' && document.allowed_users) {
-        const allowedUsers = await User.find({
-          _id: { $in: document.allowed_users }
-        });
-        usersToNotify.push(...allowedUsers);
+      // 3. Tertiary: owner_only (All Property Owners)
+      // Only if NO specific users and NO specific unit are set
+      else if (document.access_level === "owner_only") {
+        console.log(`[AccessControl] 🏘️ Sector: All Property Owners`);
+        const allOwners = await User.find({ role: "property_owner" });
+        console.log(
+          `[AccessControl] ✅ Found ${allOwners.length} total owner(s)`,
+        );
+        usersToNotify.push(...allOwners);
       }
 
-      // If sensitive, notify all agents
+      // 4. Always notify all agents if sensitive
       if (document.is_sensitive) {
-        const agents = await User.find({ role: 'union_agent' });
+        console.log(`[AccessControl] 🛡️ Sector: Sensitive/Agents`);
+        const agents = await User.find({ role: "union_agent" });
         usersToNotify.push(...agents);
       }
 
-      // Remove duplicates
+      // Remove duplicates by email
       const uniqueUsers = Array.from(
-        new Map(usersToNotify.map(user => [user._id.toString(), user])).values()
+        new Map(usersToNotify.map((user) => [user.email, user])).values(),
       );
 
+      console.log(
+        `[AccessControl] 🏁 Final count: ${uniqueUsers.length} unique recipient(s)`,
+      );
       return uniqueUsers;
     } catch (error) {
-      console.error('Error getting users to notify:', error);
+      console.error("Error getting users to notify:", error);
       return [];
     }
   }

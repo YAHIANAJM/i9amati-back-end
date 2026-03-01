@@ -17,6 +17,7 @@ import builldingRoutes from "./routes/Building.js";
 import accountingRoutes from "./routes/accountingNew.js";
 import moroccanAccountingRoutes from "./routes/moroccanAccounting.js";
 import documentRoutes from "./routes/documents.js";
+import notificationRoutes from "./routes/notifications.js";
 //testing
 dotenv.config(); // Load environment variables
 
@@ -78,6 +79,14 @@ app.use((req, res, next) => {
   next();
 });
 
+// TEST LOG - Remove after debugging
+app.use((req, res, next) => {
+  if (req.path.includes("upload")) {
+    console.log(`[HTTP] Incoming Request: ${req.method} ${req.path}`);
+  }
+  next();
+});
+
 // Register API routes
 app.use("/api/auth", authRoutes);
 app.use("/api/union", unionAgentRoutes);
@@ -92,6 +101,7 @@ app.use("/api/buildings", builldingRoutes);
 app.use("/api/accounting/moroccan", moroccanAccountingRoutes);
 app.use("/api/accounting", accountingRoutes);
 app.use("/api/documents", documentRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 // Register API routes
 // registerRoutes(app);
