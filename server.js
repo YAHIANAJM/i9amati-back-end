@@ -25,26 +25,33 @@ dotenv.config(); // Load environment variables
 
 const app = express();
 
-const allowedOrigins = [process.env.FRONTEND_URL];
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  "https://i9amati-front-end.vercel.app"
+];
+
+
+app.use((req, res, next) => {
+  console.log("Origin:", req.headers.origin);
+  next();
+});
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) return callback(null, true);
-      if (
-        allowedOrigins.indexOf(origin) !== -1 ||
-        origin.includes("localhost")
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
+
+      if (allowedOrigins.includes(origin) || origin.includes("vercel.app")) {
+        return callback(null, true);
       }
+
+      return callback(new Error("Not allowed by CORS"));
     },
-    credentials: true,
-    optionsSuccessStatus: 200,
-  }),
+    credentials: true
+  })
 );
+
+app.options("*", cors());
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
