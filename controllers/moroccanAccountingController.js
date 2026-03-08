@@ -7,6 +7,7 @@ import Loan from '../models/Loan.js';
 import Contribution from '../models/Contribution.js';
 import Payment from '../models/Payment.js';
 import Apartment from '../models/Apartment.js';
+import AnnualRevenue from '../models/AnnualRevenue.js';
 import mongoose from 'mongoose';
 
 /**
@@ -60,9 +61,16 @@ export const getJournalBook = async (req, res) => {
     
     const query = {};
     
-    // Only filter by residence if provided
+    // JournalEntry doesn't have residence_id on legacy docs; look up IDs via GeneralLedger
     if (residenceId) {
-      query.residence_id = residenceId;
+      const linkedIds = await GeneralLedger.distinct('journalEntry', {
+        residence_id: new mongoose.Types.ObjectId(residenceId),
+      });
+      // Also include any newer entries that directly carry residence_id
+      query.$or = [
+        { _id: { $in: linkedIds } },
+        { residence_id: new mongoose.Types.ObjectId(residenceId) },
+      ];
     }
     
     if (startDate || endDate) {
@@ -694,3 +702,287 @@ export const createBulkContributions = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
+/**
+ * GET /api/accounting/moroccan/annual-revenue/:residenceId/:year
+ * Get or calculate annual revenue for residence classification
+ * Based on Moroccan Law 18.00 - Article 35/37/38
+ */
+export const getAnnualRevenue = async (req, res) => {
+  try {
+    const { residenceId, year } = req.params;
+    const fiscalYear = parseInt(year);
+    
+    if (!fiscalYear || fiscalYear < 2020 || fiscalYear > 2050) {
+      return res.status(400).json({ error: 'Invalid fiscal year' });
+    }
+    
+    // Try to get existing record
+    let record = await AnnualRevenue.findOne({
+      residence_id: residenceId,
+      fiscalYear
+    });
+    
+    // If not exists, calculate it
+    if (!record) {
+      const revenues = await AnnualRevenue.calculateFromAccounting(residenceId, fiscalYear);
+      
+      record = new AnnualRevenue({
+        residence_id: residenceId,
+        fiscalYear,
+        revenues,
+        calculatedBy: req.user?._id
+      });
+      
+      await record.save();
+    }
+    
+    res.json({
+      success: true,
+      data: record,
+      classification: {
+        level: record.accountingLevel,
+        description: record.levelDescription,
+        requiredAnnexes: record.requiredAnnexes
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * POST /api/accounting/moroccan/annual-revenue/recalculate
+ * Recalculate annual revenue (trigger on data changes)
+ */
+export const recalculateAnnualRevenue = async (req, res) => {
+  try {
+    const { residenceId, year } = req.body;
+    const fiscalYear = parseInt(year);
+    
+    if (!residenceId || !fiscalYear) {
+      return res.status(400).json({ error: 'residenceId and year are required' });
+    }
+    
+    // Calculate revenues from accounting data
+    const revenues = await AnnualRevenue.calculateFromAccounting(residenceId, fiscalYear);
+    
+    console.log('Calculated revenues:', JSON.stringify(revenues, null, 2));
+    
+    // Update or create record
+    let record = await AnnualRevenue.findOne({
+      residence_id: residenceId,
+      fiscalYear
+    });
+    
+    if (record) {
+      // Don't update if locked (year closed)
+      if (record.isLocked) {
+        return res.status(403).json({ 
+          error: 'Cannot update locked fiscal year. Year has been closed.' 
+        });
+      }
+      
+      record.revenues = revenues;
+      record.calculatedAt = new Date();
+      record.calculatedBy = req.user?._id;
+      await record.save();
+    } else {
+      record = new AnnualRevenue({
+        residence_id: residenceId,
+        fiscalYear,
+        revenues,
+        calculatedBy: req.user?._id
+      });
+      await record.save();
+    }
+    
+    res.json({
+      success: true,
+      message: 'Annual revenue recalculated successfully',
+      data: record,
+      classification: {
+        level: record.accountingLevel,
+        description: record.levelDescription,
+        requiredAnnexes: record.requiredAnnexes
+      }
+    });
+  } catch (error) {
+    console.error('Error in recalculateAnnualRevenue:', error);
+    res.status(500).json({ error: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined });
+  }
+};
+
+/**
+ * GET /api/accounting/moroccan/dashboard/:residenceId/:year
+ * Get accounting dashboard data
+ */
+export const getAccountingDashboard = async (req, res) => {
+  try {
+    const { residenceId, year } = req.params;
+    const fiscalYear = parseInt(year);
+    
+    // Get or calculate annual revenue
+    let record = await AnnualRevenue.findOne({
+      residence_id: residenceId,
+      fiscalYear
+    });
+    
+    if (!record) {
+      console.log(`No record found for residence ${residenceId}, year ${fiscalYear}. Calculating...`);
+      const revenues = await AnnualRevenue.calculateFromAccounting(residenceId, fiscalYear);
+      console.log('Calculated revenues for dashboard:', JSON.stringify(revenues, null, 2));
+      
+      record = new AnnualRevenue({
+        residence_id: residenceId,
+        fiscalYear,
+        revenues,
+        calculatedBy: req.user?._id
+      });
+      
+      console.log('New record before save:', {
+        residence_id: record.residence_id,
+        fiscalYear: record.fiscalYear,
+        revenues: record.revenues,
+        totalRevenue: record.totalRevenue,
+        accountingLevel: record.accountingLevel
+      });
+      
+      await record.save();
+      
+      console.log('Record saved successfully:', {
+        totalRevenue: record.totalRevenue,
+        accountingLevel: record.accountingLevel
+      });
+    }
+    
+    // Get annex completion status
+    const annexStatus = await getAnnexCompletionStatus(residenceId, fiscalYear, record.accountingLevel);
+    
+    res.json({
+      success: true,
+      fiscalYear,
+      totalRevenue: record.totalRevenue,
+      revenueBreakdown: record.revenues,
+      classification: {
+        level: record.accountingLevel,
+        description: record.levelDescription,
+        thresholds: {
+          1: '< 200,000 MAD',
+          2: '200,000 - 500,000 MAD',
+          3: '500,000 - 1,000,000 MAD',
+          4: '> 1,000,000 MAD'
+        }
+      },
+      requiredAnnexes: record.requiredAnnexes,
+      annexCompletionStatus: annexStatus,
+      calculatedAt: record.calculatedAt,
+      isLocked: record.isLocked
+    });
+  } catch (error) {
+    console.error('Error in getAccountingDashboard:', error);
+    res.status(500).json({ error: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined });
+  }
+};
+
+/**
+ * Helper function: Check annex completion status
+ */
+async function getAnnexCompletionStatus(residenceId, fiscalYear, level) {
+  const annexStatus = {};
+  
+  // Define which data is needed for each annex
+  const annexRequirements = {
+    'Annex 3': async () => {
+      // Balance Sheet - check if we have accounts with balances
+      const accounts = await Account.countDocuments({ isActive: true });
+      return accounts > 0 ? 'complete' : 'missing';
+    },
+    'Annex 4': async () => {
+      // Income Statement - check for revenue/expense accounts
+      const hasData = await GeneralLedger.exists({
+        residence_id: residenceId,
+        date: {
+          $gte: new Date(fiscalYear, 0, 1),
+          $lte: new Date(fiscalYear, 11, 31)
+        }
+      });
+      return hasData ? 'complete' : 'missing';
+    },
+    'Annex 5': async () => {
+      // Budget - check if budget exists
+      const budget = await Budget.exists({ 
+        residence_id: residenceId, 
+        fiscalYear 
+      });
+      return budget ? 'complete' : 'missing';
+    },
+    'Annex 6': async () => {
+      // Off-budget works - placeholder
+      return 'missing';
+    },
+    'Annex 7': async () => {
+      // Reserve funds - check for reserve accounts (11xx)
+      const hasReserves = await GeneralLedger.exists({
+        residence_id: residenceId,
+        accountNumber: /^11/,
+        date: {
+          $gte: new Date(fiscalYear, 0, 1),
+          $lte: new Date(fiscalYear, 11, 31)
+        }
+      });
+      return hasReserves ? 'complete' : 'missing';
+    },
+    'Annex 8': async () => {
+      // Loans - check if loans exist
+      const hasLoans = await Loan.exists({ residence_id: residenceId });
+      return hasLoans ? 'complete' : 'missing';
+    },
+    'Annex 9': async () => {
+      // Equipment - placeholder
+      return 'missing';
+    },
+    'Annex 10': async () => {
+      // Owner contributions
+      const hasContributions = await Contribution.exists({
+        year: fiscalYear
+      });
+      return hasContributions ? 'complete' : 'missing';
+    },
+    'Annex 11': async () => {
+      // Consolidated statements
+      return 'inProgress';
+    },
+    'Annex 12': async () => {
+      // Comparison data
+      return 'inProgress';
+    },
+    'Annex 13': async () => {
+      // Simplified statements
+      return 'inProgress';
+    },
+    'Annex 13-bis': async () => {
+      // Treasury position
+      return 'inProgress';
+    },
+    'Annex 14': async () => {
+      // Audit report
+      return 'missing';
+    }
+  };
+  
+  // Get required annexes based on level
+  const record = await AnnualRevenue.findOne({ residence_id: residenceId, fiscalYear });
+  const requiredAnnexes = record?.requiredAnnexes || [];
+  
+  // Check status for each required annex
+  for (const annex of requiredAnnexes) {
+    if (annexRequirements[annex]) {
+      annexStatus[annex] = await annexRequirements[annex]();
+    } else {
+      annexStatus[annex] = 'missing';
+    }
+  }
+  
+  return annexStatus;
+}

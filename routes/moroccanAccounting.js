@@ -12,7 +12,10 @@ import {
   createLoan,
   getOwnerContributions,
   createOwnerContribution,
-  createBulkContributions
+  createBulkContributions,
+  getAnnualRevenue,
+  recalculateAnnualRevenue,
+  getAccountingDashboard
 } from '../controllers/moroccanAccountingController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 
@@ -47,5 +50,12 @@ router.post('/loans', requireRole('union_agent'), createLoan);
 router.get('/owner-contributions', getOwnerContributions);
 router.post('/owner-contributions', requireRole('union_agent'), createOwnerContribution);
 router.post('/bulk-contributions', requireRole('union_agent'), createBulkContributions);
+
+// Annual Revenue Calculation & Classification (Phase 1)
+router.get('/annual-revenue/:residenceId/:year', getAnnualRevenue);
+router.post('/annual-revenue/recalculate', requireRole('union_agent'), recalculateAnnualRevenue);
+
+// Accounting Dashboard
+router.get('/dashboard/:residenceId/:year', getAccountingDashboard);
 
 export default router;

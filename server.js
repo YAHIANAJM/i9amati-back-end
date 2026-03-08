@@ -16,6 +16,8 @@ import propertyOwnerRoutes from "./routes/Propertyowner.js";
 import builldingRoutes from "./routes/Building.js";
 import accountingRoutes from "./routes/accountingNew.js";
 import moroccanAccountingRoutes from "./routes/moroccanAccounting.js";
+import annexesRoutes from "./routes/annexes.js";
+import exportsRoutes from "./routes/exports.js";
 import documentRoutes from "./routes/documents.js";
 import notificationRoutes from "./routes/notifications.js";
 //testing
@@ -99,6 +101,8 @@ app.use("/api/apartments", apartementRoutes);
 app.use("/api/property-owners", propertyOwnerRoutes);
 app.use("/api/buildings", builldingRoutes);
 app.use("/api/accounting/moroccan", moroccanAccountingRoutes);
+app.use("/api/annexes", annexesRoutes);
+app.use("/api/exports", exportsRoutes);
 app.use("/api/accounting", accountingRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/notifications", notificationRoutes);

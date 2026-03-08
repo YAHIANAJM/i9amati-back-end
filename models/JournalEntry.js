@@ -8,6 +8,7 @@ const JournalEntrySchema = new Schema({
   lines: [{ type: Schema.Types.ObjectId, ref: 'JournalLine' }],
   status: { type: String, enum: ['active', 'reversed', 'cancelled'], default: 'active' },
   reference: { type: String }, // e.g. payment, contribution, etc.
+  residence_id: { type: Schema.Types.ObjectId, ref: 'Building' },
 }, { timestamps: true });
 
 const JournalEntry = mongoose.model('JournalEntry', JournalEntrySchema);

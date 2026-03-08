@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>مساهمات المالكين - الملحق 10</title>
+    <style>
+        @page { size: A4 landscape; margin: 1.5cm; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Arial', 'Tahoma', sans-serif; direction: rtl; text-align: right; line-height: 1.5; color: #333; font-size: 12px; }
+        .header { text-align: center; margin-bottom: 20px; border-bottom: 3px solid #2c3e50; padding-bottom: 15px; }
+        .header h1 { font-size: 22px; margin-bottom: 8px; color: #1a1a1a; font-weight: bold; }
+        .header .sub { font-size: 12px; color: #666; margin: 3px 0; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+        th { padding: 10px 8px; text-align: right; background-color: #2c3e50; color: white; font-weight: bold; border: 1px solid #555; font-size: 11px; }
+        td { padding: 8px; text-align: right; border: 1px solid #ddd; font-size: 11px; }
+        tr:nth-child(even) { background-color: #f8f9fa; }
+        tr.total { font-weight: bold; background-color: #e8f4f8 !important; }
+        td.amount { font-family: 'Courier New', monospace; text-align: left; direction: ltr; }
+        td.paid { color: #27ae60; font-weight: bold; }
+        td.unpaid { color: #e74c3c; font-weight: bold; }
+        .summary-grid { display: flex; gap: 15px; margin-top: 20px; }
+        .summary-card { flex: 1; padding: 15px; border-radius: 8px; text-align: center; }
+        .summary-card.blue { background: #ebf5fb; border: 2px solid #3498db; }
+        .summary-card.green { background: #eafaf1; border: 2px solid #27ae60; }
+        .summary-card.red { background: #fdedec; border: 2px solid #e74c3c; }
+        .summary-card .card-label { font-size: 11px; color: #666; margin-bottom: 5px; }
+        .summary-card .card-value { font-size: 18px; font-weight: bold; font-family: 'Courier New', monospace; }
+        .footer { margin-top: 30px; text-align: center; font-size: 9px; color: #999; border-top: 1px solid #ddd; padding-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>مساهمات المالكين - الملحق 10</h1>
+        <div class="sub">Owner Contributions - Annex 10</div>
+        <div class="sub">{{buildingName}}</div>
+        <div class="sub">السنة المالية {{fiscalYear}} | تاريخ الإصدار: {{date}}</div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>رقم الشقة</th>
+                <th>اسم المالك</th>
+                <th>نسبة المشاركة</th>
+                <th>المبلغ المستحق (د.م)</th>
+                <th>المبلغ المدفوع (د.م)</th>
+                <th>المبلغ المتبقي (د.م)</th>
+                <th>الحالة</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{contributionRows}}
+            <tr class="total">
+                <td colspan="3">المجموع (TOTAL)</td>
+                <td class="amount">{{totalRequired}} د.م</td>
+                <td class="amount">{{totalPaid}} د.م</td>
+                <td class="amount">{{totalBalance}} د.م</td>
+                <td></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="summary-grid">
+        <div class="summary-card blue">
+            <div class="card-label">إجمالي المستحق<br>Total Required</div>
+            <div class="card-value" style="color:#3498db;">{{totalRequired}} د.م</div>
+        </div>
+        <div class="summary-card green">
+            <div class="card-label">إجمالي المدفوع<br>Total Paid</div>
+            <div class="card-value" style="color:#27ae60;">{{totalPaid}} د.م</div>
+        </div>
+        <div class="summary-card red">
+            <div class="card-label">إجمالي المتأخر<br>Total Outstanding</div>
+            <div class="card-value" style="color:#e74c3c;">{{totalBalance}} د.م</div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>تم إنشاء هذا التقرير بواسطة نظام i9amati للإدارة العقارية | Owner Contributions prepared in accordance with Law 18.00</p>
+    </div>
+</body>
+</html>

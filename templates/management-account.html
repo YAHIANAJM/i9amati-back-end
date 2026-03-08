@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>حساب التسيير - الملحق 4</title>
+    <style>
+        @page { size: A4; margin: 2cm; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Arial', 'Tahoma', sans-serif; direction: rtl; text-align: right; line-height: 1.6; color: #333; }
+        .header { text-align: center; margin-bottom: 30px; border-bottom: 3px solid #2c3e50; padding-bottom: 20px; }
+        .header h1 { font-size: 24px; margin-bottom: 8px; color: #1a1a1a; font-weight: bold; }
+        .header .sub { font-size: 13px; color: #666; margin: 4px 0; }
+        .section { margin-bottom: 25px; }
+        .section-title { font-size: 17px; font-weight: bold; padding: 10px 12px; margin-bottom: 12px; color: white; border-radius: 5px; }
+        .revenues .section-title { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+        .expenses .section-title { background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%); }
+        .summary .section-title { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+        th, td { padding: 10px 12px; text-align: right; border: 1px solid #ddd; }
+        th { background-color: #34495e; color: white; font-weight: bold; }
+        tr:nth-child(even) { background-color: #f8f9fa; }
+        tr.total { font-weight: bold; background-color: #e8f4f8 !important; font-size: 15px; }
+        td.amount { font-family: 'Courier New', monospace; text-align: left; direction: ltr; }
+        .summary-box { border: 2px solid #3498db; border-radius: 8px; padding: 20px; }
+        .summary-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px dashed #ccc; }
+        .summary-row:last-child { border-bottom: none; font-weight: bold; font-size: 18px; padding-top: 15px; }
+        .summary-label { font-weight: bold; color: #555; }
+        .summary-value { font-family: 'Courier New', monospace; direction: ltr; }
+        .positive { color: #27ae60; }
+        .negative { color: #e74c3c; }
+        .footer { margin-top: 40px; text-align: center; font-size: 10px; color: #999; border-top: 1px solid #ddd; padding-top: 15px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>حساب التسيير المحاسبي - الملحق 4</h1>
+        <div class="sub">Management Account - Annex 4</div>
+        <div class="sub">{{buildingName}}</div>
+        <div class="sub">السنة المالية {{fiscalYear}}</div>
+        <div class="sub" style="font-size:11px;color:#999;">تاريخ الإصدار: {{date}} | وفقاً للقانون 18.00</div>
+    </div>
+
+    <div class="section revenues">
+        <div class="section-title">العائدات (REVENUES)</div>
+        <table>
+            <thead><tr><th>رمز الحساب</th><th>اسم الحساب</th><th>المبلغ (د.م)</th></tr></thead>
+            <tbody>
+                {{revenueRows}}
+                <tr class="total"><td></td><td>مجموع العائدات (Total Revenues)</td><td class="amount">{{totalRevenues}} د.م</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section expenses">
+        <div class="section-title">المصروفات (EXPENSES)</div>
+        <table>
+            <thead><tr><th>رمز الحساب</th><th>اسم الحساب</th><th>المبلغ (د.م)</th></tr></thead>
+            <tbody>
+                {{expenseRows}}
+                <tr class="total"><td></td><td>مجموع المصروفات (Total Expenses)</td><td class="amount">{{totalExpenses}} د.م</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section summary">
+        <div class="section-title">الملخص (SUMMARY)</div>
+        <div class="summary-box">
+            <div class="summary-row">
+                <span class="summary-label">إجمالي العائدات (Total Revenues)</span>
+                <span class="summary-value positive">{{totalRevenues}} د.م</span>
+            </div>
+            <div class="summary-row">
+                <span class="summary-label">إجمالي المصروفات (Total Expenses)</span>
+                <span class="summary-value negative">{{totalExpenses}} د.م</span>
+            </div>
+            <div class="summary-row">
+                <span class="summary-label {{netClass}}">{{netLabel}}</span>
+                <span class="summary-value {{netClass}}">{{netValue}} د.م</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>تم إنشاء هذا التقرير بواسطة نظام i9amati للإدارة العقارية</p>
+        <p>Management Account prepared in accordance with Law 18.00</p>
+    </div>
+</body>
+</html>

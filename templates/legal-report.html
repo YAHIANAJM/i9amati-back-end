@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>التقرير القانوني للمحاكم</title>
+    <style>
+        @page { size: A4; margin: 2.5cm; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Arial', 'Tahoma', serif; direction: rtl; text-align: right; line-height: 1.8; color: #000; }
+
+        .official-header { text-align: center; border-bottom: 3px solid #000; padding-bottom: 20px; margin-bottom: 30px; }
+        .kingdom-seal { font-size: 12px; color: #333; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 5px; }
+        .ministry-line { font-size: 11px; color: #555; margin: 3px 0; }
+        .official-title { font-size: 28px; font-weight: bold; margin: 20px 0 10px; color: #000; text-decoration: underline; }
+        .official-ref { font-size: 13px; color: #333; margin: 5px 0; }
+
+        .doc-info { margin: 20px 0; padding: 15px; border: 2px solid #333; }
+        .doc-info table { width: 100%; border-collapse: collapse; }
+        .doc-info td { padding: 8px 12px; border: 1px solid #ccc; font-size: 13px; }
+        .doc-info td:first-child { font-weight: bold; background: #f5f5f5; width: 35%; }
+
+        .article { margin: 25px 0; }
+        .article-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; color: #000; }
+        .article-body { font-size: 13px; text-align: justify; line-height: 2; }
+
+        .financial-table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        .financial-table th { padding: 10px; background: #000; color: white; text-align: right; border: 1px solid #333; }
+        .financial-table td { padding: 10px; border: 1px solid #333; font-size: 13px; }
+        .financial-table tr.subtotal td { background: #f0f0f0; font-weight: bold; }
+        .financial-table td.amount { font-family: 'Courier New', monospace; text-align: left; direction: ltr; }
+
+        .annexes-section { margin: 20px 0; padding: 15px; border: 1px solid #333; }
+        .annex-line { padding: 6px 0; border-bottom: 1px dotted #ccc; font-size: 13px; }
+
+        .signatures { margin-top: 60px; display: flex; justify-content: space-between; }
+        .signature-block { text-align: center; width: 40%; }
+        .signature-title { font-weight: bold; margin-bottom: 40px; font-size: 13px; }
+        .signature-line { border-top: 1px solid #333; padding-top: 5px; font-size: 12px; color: #666; }
+
+        .footer { margin-top: 30px; text-align: center; font-size: 9px; color: #666; border-top: 2px solid #333; padding-top: 10px; }
+        .official-stamp { text-align: center; margin: 30px 0; font-size: 11px; color: #333; border: 2px dashed #666; padding: 15px; display: inline-block; }
+    </style>
+</head>
+<body>
+    <div class="official-header">
+        <div class="kingdom-seal">المملكة المغربية</div>
+        <div class="ministry-line">Royaume du Maroc</div>
+        <div style="width:80px;height:3px;background:#000;margin:15px auto;"></div>
+        <div class="official-title">التقرير المحاسبي الرسمي</div>
+        <div class="official-ref">Official Accounting Report</div>
+        <div class="official-ref">وفقاً للقانون 18.00 المتعلق بنظام الملكية المشتركة</div>
+    </div>
+
+    <div class="doc-info">
+        <table>
+            <tr><td>اسم العقار</td><td>{{buildingName}}</td></tr>
+            <tr><td>عنوان العقار</td><td>{{buildingAddress}}</td></tr>
+            <tr><td>رقم التسجيل</td><td>{{registrationNumber}}</td></tr>
+            <tr><td>السنة المالية</td><td>{{fiscalYear}}</td></tr>
+            <tr><td>إجمالي الإيرادات</td><td><strong>{{totalRevenue}} د.م</strong></td></tr>
+            <tr><td>مستوى المحاسبة</td><td>المستوى {{accountingLevel}} - {{levelDescription}}</td></tr>
+            <tr><td>تاريخ الإعداد</td><td>{{date}}</td></tr>
+        </table>
+    </div>
+
+    <div class="article">
+        <div class="article-title">المادة الأولى: الإطار القانوني</div>
+        <div class="article-body">
+            تم إعداد هذا التقرير المحاسبي السنوي وفقاً لأحكام القانون رقم 18.00 الصادر في 3 أكتوبر 2002 المتعلق بنظام الملكية المشتركة للعمارات والمجموعات السكنية والمرسوم التطبيقي الصادر في 13 فبراير 2003، وكذا المنشور الوزاري رقم 24 الصادر سنة 2003 المتعلق بمسك المحاسبة على مستوى العمارات والمجموعات السكنية.
+        </div>
+    </div>
+
+    <div class="article">
+        <div class="article-title">المادة الثانية: الملاحق المرفقة</div>
+        <div class="annexes-section">{{annexesList}}</div>
+    </div>
+
+    <div class="article">
+        <div class="article-title">المادة الثالثة: الملاحظات والإقرار</div>
+        <div class="article-body">
+            يُقر الموقعون أدناه أن هذا التقرير يعكس الوضع المالي الحقيقي للعقار المذكور خلال السنة المالية {{fiscalYear}}، وأن جميع العمليات المحاسبية قد تمت وفق المعايير القانونية المعمول بها في المملكة المغربية.
+        </div>
+    </div>
+
+    <div class="signatures">
+        <div class="signature-block">
+            <div class="signature-title">وكيل الاتحاد<br>Union Agent</div>
+            <div class="signature-line">التوقيع والختم</div>
+        </div>
+        <div class="signature-block">
+            <div class="signature-title">المحاسب المعتمد<br>Certified Accountant</div>
+            <div class="signature-line">التوقيع والختم</div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>هذا التقرير وثيقة رسمية معدة وفق القانون 18.00 للمملكة المغربية | Official document prepared under Law 18.00 - Kingdom of Morocco</p>
+        <p>i9amati Property Management System</p>
+    </div>
+</body>
+</html>

@@ -46,7 +46,10 @@ export const auth = async (req, res, next) => {
 };
 
 // Role-based access control middleware
-export const requireRole = (role) => (req, res, next) => {
-  if (req.user.role !== role) return res.status(403).json({ error: 'Forbidden' });
+export const requireRole = (roles) => (req, res, next) => {
+  const allowedRoles = Array.isArray(roles) ? roles : [roles];
+  if (!allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   next();
 };
