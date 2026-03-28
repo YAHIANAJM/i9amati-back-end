@@ -609,58 +609,14 @@ export const exportAnnexGenericPDF = async (req, res) => {
 
     const residence = await Building.findById(residenceId);
     const buildingName = residence?.building_name || '';
-    const buildingAddress = residence?.building_address || '';
 
-    const renderValue = (val) => {
-      if (val === null || val === undefined) return '';
-      if (typeof val === 'number') return val.toLocaleString('ar-MA');
-      if (typeof val === 'boolean') return val ? 'نعم' : 'لا';
-      if (Array.isArray(val)) {
-        if (val.length === 0) return '-';
-        if (typeof val[0] === 'object') {
-          const keys = Object.keys(val[0]);
-          const headerRow = `<tr>${keys.map(k => `<th>${k}</th>`).join('')}</tr>`;
-          const bodyRows = val.map(item =>
-            `<tr>${keys.map(k => `<td>${renderValue(item[k])}</td>`).join('')}</tr>`
-          ).join('');
-          return `<table class="nested">${headerRow}${bodyRows}</table>`;
-        }
-        return val.join(', ');
-      }
-      if (typeof val === 'object') {
-        return Object.entries(val).map(([k, v]) => `<b>${k}:</b> ${renderValue(v)}`).join('<br>');
-      }
-      return String(val);
-    };
+    const pdfBuffer = await pdfGeneratorHTML.generateGenericAnnexPdf(
+      annex.data,
+      annex.annexName || annexNumber,
+      buildingName,
+      fiscalYear
+    );
 
-    const dataRows = Object.entries(annex.data || {}).map(([key, val]) =>
-      `<tr><td class="key">${key}</td><td>${renderValue(val)}</td></tr>`
-    ).join('');
-
-    const html = `<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
-<style>
-  body { font-family: Arial, sans-serif; padding: 24px; direction: rtl; }
-  h1 { text-align: center; font-size: 18px; border-bottom: 2px solid #333; padding-bottom: 8px; }
-  .subtitle { text-align: center; color: #555; margin-bottom: 20px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { border: 1px solid #ccc; padding: 6px 10px; }
-  th { background: #4472C4; color: #fff; }
-  td.key { background: #f0f0f0; font-weight: bold; width: 40%; }
-  .nested { width: 100%; font-size: 12px; }
-  .nested th { background: #7a9cdb; }
-</style>
-</head>
-<body>
-<h1>${annex.annexName}</h1>
-<div class="subtitle">${buildingName} - ${buildingAddress} | السنة المالية: ${fiscalYear}</div>
-<table>${dataRows}</table>
-</body>
-</html>`;
-
-    const pdfBuffer = await pdfGeneratorHTML.htmlToPdf(html, false);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${annexType}-${fiscalYear}.pdf"`);
     res.send(pdfBuffer);
