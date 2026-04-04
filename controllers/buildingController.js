@@ -72,6 +72,14 @@ export const getBuildings = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "residences",
+          localField: "residence",
+          foreignField: "_id",
+          as: "residenceInfo",
+        },
+      },
+      {
         $addFields: {
           apartmentCount: { $size: "$apartments" },
           ownerCount: {
@@ -81,9 +89,11 @@ export const getBuildings = async (req, res) => {
               in: { $add: ["$$value", { $size: "$$this.owners" }] },
             },
           },
+          residenceName: { $arrayElemAt: ["$residenceInfo.name", 0] },
+          residenceId: { $arrayElemAt: ["$residenceInfo._id", 0] },
         },
       },
-      { $project: { aptDetails: 0 } },
+      { $project: { aptDetails: 0, residenceInfo: 0 } },
     ]);
 
     const totalCount = await Building.countDocuments(query);
@@ -115,6 +125,9 @@ export const getBuildings = async (req, res) => {
       apartments: b.apartments || [],
       apartmentCount: b.apartmentCount || 0,
       ownerCount: b.ownerCount || 0,
+      union_type: b.union_type || 'immeuble',
+      residenceId: b.residenceId || null,
+      residenceName: b.residenceName || null,
       createdAt: b.createdAt,
       updatedAt: b.updatedAt,
     }));
