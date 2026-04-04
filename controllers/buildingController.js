@@ -72,6 +72,14 @@ export const getBuildings = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "residences",
+          localField: "residence",
+          foreignField: "_id",
+          as: "residenceInfo",
+        },
+      },
+      {
         $addFields: {
           apartmentCount: { $size: "$apartments" },
           ownerCount: {
@@ -81,9 +89,11 @@ export const getBuildings = async (req, res) => {
               in: { $add: ["$$value", { $size: "$$this.owners" }] },
             },
           },
+          residenceName: { $arrayElemAt: ["$residenceInfo.name", 0] },
+          residenceId: { $arrayElemAt: ["$residenceInfo._id", 0] },
         },
       },
-      { $project: { aptDetails: 0 } },
+      { $project: { aptDetails: 0, residenceInfo: 0 } },
     ]);
 
     const totalCount = await Building.countDocuments(query);
@@ -115,6 +125,9 @@ export const getBuildings = async (req, res) => {
       apartments: b.apartments || [],
       apartmentCount: b.apartmentCount || 0,
       ownerCount: b.ownerCount || 0,
+      union_type: b.union_type || 'immeuble',
+      residenceId: b.residenceId || null,
+      residenceName: b.residenceName || null,
       createdAt: b.createdAt,
       updatedAt: b.updatedAt,
     }));
@@ -650,6 +663,7 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         ? building.sharedWithTitleDeed?.trim() || null
         : null,
       description: building.description?.trim(),
+      union_type: building.union_type || "immeuble",
       agent: agent._id,
     };
 
@@ -718,6 +732,10 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         land_share_ratio: aptDetails.land_share_ratio?.trim() || undefined,
         unit_description: aptDetails.ownership_status?.trim(),
         main_plot_number: aptDetails.main_plot_number?.trim(),
+        sub_title_number: aptDetails.sub_title_number?.trim() || undefined,
+        share_common: aptDetails.share_common
+          ? parseFloat(aptDetails.share_common)
+          : undefined,
         percentage_of_apartment: aptDetails.percentage_of_apartment
           ? parseFloat(aptDetails.percentage_of_apartment)
           : undefined,

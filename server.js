@@ -20,6 +20,7 @@ import annexesRoutes from "./routes/annexes.js";
 import exportsRoutes from "./routes/exports.js";
 import documentRoutes from "./routes/documents.js";
 import notificationRoutes from "./routes/notifications.js";
+import residenceRoutes from "./routes/Residence.js";
 //testing
 dotenv.config(); // Load environment variables
 
@@ -107,6 +108,7 @@ app.use("/api/community", communityFeedRoutes);
 app.use("/api/apartments", apartementRoutes);
 app.use("/api/property-owners", propertyOwnerRoutes);
 app.use("/api/buildings", builldingRoutes);
+app.use("/api/residences", residenceRoutes);
 app.use("/api/accounting/moroccan", moroccanAccountingRoutes);
 app.use("/api/annexes", annexesRoutes);
 app.use("/api/exports", exportsRoutes);
