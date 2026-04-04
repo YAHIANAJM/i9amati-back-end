@@ -21,19 +21,7 @@ const ApartmentSchema = new mongoose.Schema(
     land_share_area: { type: Number, min: 0 },
 
     // Ownership shares
-    percentage_of_apartment: { type: Number, min: 0, max: 100 }, // legacy field
-
-    // Sub cadastral title number (رسم عقاري فرعي) - optional
-    // If absent, share_common is auto-calculated from area_sqm
-    sub_title_number: { type: String },
-
-    // For عمارة (immeuble): single share in all common parts
-    share_common: { type: Number, min: 0, max: 100 },
-
-    // For إقامة (residence): two shares
-    share_building: { type: Number, min: 0, max: 100 }, // % in building's common parts
-    share_residence: { type: Number, min: 0, max: 100 }, // % in residence-wide common parts
-
+    percentage_of_apartment: { type: Number, min: 0, max: 100 }, // e.g., 2.5
     land_share_ratio: { type: String }, // e.g., "1.8%"
     common_share_ratio: { type: String },
 

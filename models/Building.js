@@ -29,16 +29,6 @@ const BuildingSchema = new mongoose.Schema(
     documents: [{ type: String }],
     description: { type: String },
 
-    // Type of union: standalone building or part of a residence
-    union_type: {
-      type: String,
-      enum: ["immeuble", "residence"],
-      default: "immeuble",
-    },
-
-    // If this building belongs to a residence
-    residence: { type: mongoose.Schema.Types.ObjectId, ref: "Residence", default: null },
-
     // the syndic agent assigned to this building
     agent: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
