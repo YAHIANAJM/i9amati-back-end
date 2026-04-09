@@ -31,7 +31,7 @@
     "mongose": "^0.0.2-security",
     "multer": "^2.0.2",
     "nanoid": "^5.1.5",
-    "nodemailer": "^8.0.1",
+    "nodemailer": "^8.0.5",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
     "pdfkit": "^0.17.2",
