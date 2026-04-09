@@ -67,7 +67,7 @@ const ApartmentSchema = new mongoose.Schema(
       {
         owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         email: { type: String },
-        password: { type: String }, // Plaintext password (CIN) for retrieval
+        password: { type: String }, // AES-256-GCM encrypted credential (use decryptCredential() to read)
       },
     ],
   },

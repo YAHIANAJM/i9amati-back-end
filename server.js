@@ -2,10 +2,11 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import connectDB from "./db.js";
 import authRoutes from "./routes/auth.js";
 import unionAgentRoutes from "./routes/unionAgent.js";
-
 import serviceRoutes from "./routes/service.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import alertsRoutes from "./routes/alerts.js";
@@ -21,83 +22,77 @@ import exportsRoutes from "./routes/exports.js";
 import documentRoutes from "./routes/documents.js";
 import notificationRoutes from "./routes/notifications.js";
 import residenceRoutes from "./routes/Residence.js";
-//testing
-dotenv.config(); // Load environment variables
+
+dotenv.config();
+
+if (!process.env.JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET environment variable is not set");
+  process.exit(1);
+}
 
 const app = express();
 
+// Required for Vercel / reverse proxies — enables correct IP and HTTPS detection
+app.set('trust proxy', 1);
+
+// ─── Security headers ────────────────────────────────────────────────────────
+app.use(helmet());
+
+// ─── CORS ────────────────────────────────────────────────────────────────────
 const allowedOrigins = [
   process.env.FRONTEND_URL,
-  "https://i9amati-front-end.vercel.app"
-];
-
-
-app.use((req, res, next) => {
-  console.log("Origin:", req.headers.origin);
-  next();
-});
+  "https://i9amati-front-end.vercel.app",
+].filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
+      // Allow same-origin requests (no Origin header)
       if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin) || origin.includes("vercel.app")) {
-        return callback(null, true);
-      }
-
+      if (allowedOrigins.includes(origin)) return callback(null, true);
       return callback(new Error("Not allowed by CORS"));
     },
-    credentials: true
+    credentials: true,
   })
 );
 
-app.options("*", cors());
-// Middleware
-app.use(express.json());
+app.options("*", cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+}));
+
+// ─── Rate limiting ───────────────────────────────────────────────────────────
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many requests, please try again later" },
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10, // 10 login attempts per 15 min
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many login attempts, please try again later" },
+});
+
+app.use(globalLimiter);
+app.use("/api/auth/login", authLimiter);
+
+// ─── Body & Cookie parsing ───────────────────────────────────────────────────
+app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
 
 connectDB();
 
-// Logging middleware
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-      console.log(logLine);
-    }
-  });
-
-  next();
-});
-
-// TEST LOG - Remove after debugging
-app.use((req, res, next) => {
-  if (req.path.includes("upload")) {
-    console.log(`[HTTP] Incoming Request: ${req.method} ${req.path}`);
-  }
-  next();
-});
-
-// Register API routes
+// ─── API routes ──────────────────────────────────────────────────────────────
 app.use("/api/auth", authRoutes);
 app.use("/api/union", unionAgentRoutes);
 app.use("/api/services", serviceRoutes);
@@ -116,31 +111,24 @@ app.use("/api/documents", documentRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/residences", residenceRoutes);
 
-// Register API routes
-// registerRoutes(app);
+// ─── Health check ────────────────────────────────────────────────────────────
+app.get("/", (req, res) => res.send("Iqamati API is running..."));
+app.get("/health", (req, res) => res.json({ status: "OK", timestamp: new Date().toISOString() }));
 
-// Example route
-app.get("/", (req, res) => {
-  res.send("Iqamati API is running...");
-});
-
-// Health check endpoint
-app.get("/health", (req, res) => {
-  res.json({ status: "OK", timestamp: new Date().toISOString() });
-});
-
-// Error handling middleware
+// ─── Global error handler ────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
   const status = err.status || err.statusCode || 500;
-  const message = err.message || "Internal Server Error";
+  // Never expose raw error messages in production
+  const message =
+    process.env.NODE_ENV === "production"
+      ? status >= 500 ? "Internal Server Error" : err.message
+      : err.message || "Internal Server Error";
   res.status(status).json({ message });
-  console.error(err);
+  if (status >= 500) console.error(err);
 });
 
-// Start server
+// ─── Start server ────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Backend server running on port ${PORT}`);
-  console.log(`📡 API endpoints available at http://localhost:${PORT}/api`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV}`);
+  console.log(`Server running on port ${PORT} [${process.env.NODE_ENV}]`);
 });

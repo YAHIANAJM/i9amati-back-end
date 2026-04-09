@@ -172,27 +172,13 @@ router.post('/cmi/create', auth, async (req, res) => {
   }
 });
 
-// CMI Payment Callback (Webhook)
+// CMI Payment Callback (Webhook) — no user session, verified by HMAC signature
 router.post('/cmi/callback', async (req, res) => {
   try {
     const callbackData = req.body;
 
-    // Check if this is a mock payment (for testing)
-    const isMockPayment = callbackData.hash === 'mock-hash-signature' || process.env.CMI_MOCK_MODE === 'true';
-
-    let verification;
-    if (isMockPayment) {
-      // Mock verification for testing
-      verification = {
-        isValid: true,
-        orderId: callbackData.orderId,
-        transactionId: callbackData.transactionId || `TXN-MOCK-${Date.now()}`,
-        status: callbackData.status || 'APPROVED'
-      };
-    } else {
-      // Real CMI verification
-      verification = cmiPaymentService.verifyPaymentCallback(callbackData);
-    }
+    // Always use real CMI signature verification — no mock bypasses in production
+    const verification = cmiPaymentService.verifyPaymentCallback(callbackData);
 
     if (!verification.isValid) {
       return res.status(400).json({ error: 'Invalid payment signature' });

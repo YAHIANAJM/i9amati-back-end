@@ -1,6 +1,3 @@
-// ========================================
-// FILE 1: backend/controllers/buildingController.js
-// ========================================
 import Building from "../models/Building.js";
 import Apartment from "../models/Apartment.js";
 import User from "../models/User.js";
@@ -10,6 +7,35 @@ import bcrypt from "bcryptjs";
 import Group from "../models/Group.js";
 import crypto from "crypto";
 import mongoose from "mongoose";
+
+// ─── Credential encryption helpers ──────────────────────────────────────────
+// Encrypts a credential (e.g. CIN) with AES-256-GCM so it can be decrypted
+// by the union agent but is never stored as plaintext.
+const CRED_KEY = Buffer.from(
+  (process.env.CREDENTIAL_ENCRYPTION_KEY || '').padEnd(64, '0').slice(0, 64),
+  'hex'
+);
+
+function encryptCredential(plaintext) {
+  if (!process.env.CREDENTIAL_ENCRYPTION_KEY) {
+    throw new Error('CREDENTIAL_ENCRYPTION_KEY is not set');
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', CRED_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+export function decryptCredential(ciphertext) {
+  const [ivHex, tagHex, dataHex] = ciphertext.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const tag = Buffer.from(tagHex, 'hex');
+  const data = Buffer.from(dataHex, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', CRED_KEY, iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(data) + decipher.final('utf8');
+}
 
 /**
  * Notify a union agent that another building declared shared parts with theirs.
@@ -106,11 +132,15 @@ export const getBuildings = async (req, res) => {
     const { searchBuilding, searchApartment, searchOwner } = req.query;
     let query = { agent: new mongoose.Types.ObjectId(req.user.id) };
 
+    // Escape special regex characters to prevent ReDoS / injection
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     // 1. Filter by Building Name or Code
     if (searchBuilding) {
+      const safe = escapeRegex(searchBuilding);
       query.$or = [
-        { building_name: { $regex: searchBuilding, $options: "i" } },
-        { building_code: { $regex: searchBuilding, $options: "i" } },
+        { building_name: { $regex: safe, $options: "i" } },
+        { building_code: { $regex: safe, $options: "i" } },
       ];
     }
 
@@ -118,12 +148,13 @@ export const getBuildings = async (req, res) => {
     if (searchApartment || searchOwner) {
       let apartmentQuery = {};
       if (searchApartment) {
-        apartmentQuery.unit_code = { $regex: searchApartment, $options: "i" };
+        apartmentQuery.unit_code = { $regex: escapeRegex(searchApartment), $options: "i" };
       }
       if (searchOwner) {
+        const safeOwner = escapeRegex(searchOwner);
         apartmentQuery.$or = [
-          { "owners.firstName": { $regex: searchOwner, $options: "i" } },
-          { "owners.lastName": { $regex: searchOwner, $options: "i" } },
+          { "owners.firstName": { $regex: safeOwner, $options: "i" } },
+          { "owners.lastName": { $regex: safeOwner, $options: "i" } },
         ];
       }
 
@@ -538,7 +569,7 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
         newApartment.ownerCredentials.push({
           owner: representativeUser._id,
           email: email,
-          password: nationalId, // Plaintext for agent retrieval
+          password: encryptCredential(nationalId), // AES-256 encrypted
         });
         newApartment.representativeUser = representativeUser._id;
 
@@ -893,7 +924,7 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         newApartment.ownerCredentials.push({
           owner: representativeUser._id,
           email: repEmail,
-          password: nationalId, // Plaintext for agent retrieval
+          password: encryptCredential(nationalId), // AES-256 encrypted
         });
 
         createdOwners.push({
@@ -1203,7 +1234,7 @@ export const addApartmentWithOwnersToBuilding = async (req, res) => {
       newApartment.ownerCredentials.push({
         owner: representativeUser._id,
         email: repEmail,
-        password: nationalId, // Plaintext for agent retrieval
+        password: encryptCredential(nationalId), // AES-256 encrypted
       });
 
       // Update embedded email matched for Rep to be the generated system email
