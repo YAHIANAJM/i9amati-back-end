@@ -1,4 +1,5 @@
-import htmlPdf from 'html-pdf-node';
+import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -76,22 +77,84 @@ const renderTemplate = (templateName, data) => {
 };
 
 /**
+ * Launch a shared browser instance (reused across invocations in the same container).
+ * In dev: uses locally installed Chrome. On Vercel: uses @sparticuz/chromium.
+ */
+let _browser = null;
+
+const findLocalChrome = () => {
+  const paths = process.platform === 'win32'
+    ? [
+        process.env['PROGRAMFILES(X86)'] + '\\Google\\Chrome\\Application\\chrome.exe',
+        process.env['PROGRAMFILES'] + '\\Google\\Chrome\\Application\\chrome.exe',
+        process.env.LOCALAPPDATA + '\\Google\\Chrome\\Application\\chrome.exe',
+      ]
+    : process.platform === 'darwin'
+    ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
+    : ['/usr/bin/google-chrome', '/usr/bin/chromium-browser', '/usr/bin/chromium'];
+
+  const fs_sync = fs;
+  for (const p of paths) {
+    if (p && fs_sync.existsSync(p)) return p;
+  }
+  return null;
+};
+
+const getBrowser = async () => {
+  if (_browser && _browser.isConnected()) return _browser;
+
+  const isDev = process.env.NODE_ENV === 'development';
+
+  if (isDev) {
+    const localChrome = findLocalChrome();
+    if (!localChrome) {
+      throw new Error('No local Chrome/Chromium found. Install Google Chrome or set NODE_ENV=production for serverless mode.');
+    }
+    _browser = await puppeteer.launch({
+      headless: true,
+      executablePath: localChrome,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+    });
+  } else {
+    _browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
+  }
+  return _browser;
+};
+
+/**
+ * Convert an HTML string to a PDF buffer using puppeteer-core + @sparticuz/chromium
+ */
+const renderHtmlToPdfBuffer = async (html, pdfOptions = {}) => {
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '1.5cm', right: '1.5cm', bottom: '1.5cm', left: '1.5cm' },
+      ...pdfOptions,
+    });
+    return Buffer.from(pdfBuffer);
+  } finally {
+    await page.close();
+  }
+};
+
+/**
  * Generate PDF from HTML template
  */
 export const generatePDFFromTemplate = async (templateName, data) => {
   try {
     const html = renderTemplate(templateName, data);
-    
-    const options = {
-      format: 'A4',
-      printBackground: true,
-      margin: { top: '2cm', right: '2cm', bottom: '2cm', left: '2cm' }
-    };
-    
-    const file = { content: html };
-    const pdfBuffer = await htmlPdf.generatePdf(file, options);
-    
-    return pdfBuffer;
+    return await renderHtmlToPdfBuffer(html, {
+      margin: { top: '2cm', right: '2cm', bottom: '2cm', left: '2cm' },
+    });
   } catch (error) {
     console.error('Error generating PDF from template:', error);
     throw error;
@@ -102,14 +165,9 @@ export const generatePDFFromTemplate = async (templateName, data) => {
  * Generate PDF from raw HTML string
  */
 export const htmlToPdf = async (html, landscape = false) => {
-  const options = {
-    format: 'A4',
+  return await renderHtmlToPdfBuffer(html, {
     landscape,
-    printBackground: true,
-    margin: { top: '1.5cm', right: '1.5cm', bottom: '1.5cm', left: '1.5cm' }
-  };
-  const file = { content: html };
-  return await htmlPdf.generatePdf(file, options);
+  });
 };
 
 /**
@@ -303,16 +361,7 @@ export const generateBalanceSheetPDFHTML = async (balanceSheetData, residenceInf
     html = html.replace(/{{[^}]*isBalanced}}([\s\S]*?){{\/[^}]*isBalanced}}/g, '$1');
   }
 
-  const options = {
-    format: 'A4',
-    printBackground: true,
-    margin: { top: '2cm', right: '2cm', bottom: '2cm', left: '2cm' }
-  };
-  
-  const file = { content: html };
-  const pdfBuffer = await htmlPdf.generatePdf(file, options);
-  
-  return pdfBuffer;
+  return htmlToPdf(html);
 };
 
 /**

@@ -611,54 +611,146 @@ export const exportAnnexGenericPDF = async (req, res) => {
     const buildingName = residence?.building_name || '';
     const buildingAddress = residence?.building_address || '';
 
-    const renderValue = (val) => {
-      if (val === null || val === undefined) return '';
-      if (typeof val === 'number') return val.toLocaleString('ar-MA');
+    // ── Arabic field labels ──
+    const FIELD_LABELS = {
+      _id: 'رقم الحساب', total: 'المجموع', amount: 'المبلغ',
+      accountNumber: 'رقم الحساب', accountName: 'اسم الحساب',
+      totalReceipts: 'إجمالي التحصيلات', totalExpenses: 'إجمالي المصروفات',
+      netBalance: 'الرصيد الصافي', balanceType: 'نوع الرصيد',
+      receipts: 'التحصيلات (إيرادات)', expenses: 'المصروفات',
+      revenues: 'الإيرادات', totalRevenues: 'إجمالي الإيرادات',
+      totalExpensesForecasted: 'إجمالي المصروفات التقديرية',
+      totalRevenuesForecasted: 'إجمالي الإيرادات التقديرية',
+      forecastedResult: 'النتيجة التقديرية',
+      revenuesForecasted: 'الإيرادات التقديرية',
+      expensesForecasted: 'المصروفات التقديرية',
+      netResult: 'النتيجة الصافية', resultType: 'نوع النتيجة',
+      apartmentNumber: 'رقم الشقة', ownerName: 'اسم المالك',
+      ownerEmail: 'البريد الإلكتروني', ownerPhone: 'الهاتف',
+      share: 'الحصة', sharePercentage: 'نسبة الحصة (%)',
+      contributionsDue: 'المساهمات المستحقة', paidAmount: 'المبلغ المدفوع',
+      outstandingBalance: 'الرصيد المتبقي', overpayment: 'الدفع الزائد',
+      totalContributions: 'إجمالي المساهمات', totalDue: 'الإجمالي المستحق',
+      totalPaid: 'إجمالي المدفوع', totalOutstanding: 'إجمالي المتبقي',
+      totalApartments: 'عدد الشقق', totalShares: 'إجمالي الحصص',
+      collectionRate: 'نسبة التحصيل (%)', balance: 'الرصيد',
+      debit: 'مدين', credit: 'دائن',
+      principalAmount: 'مبلغ القرض', interestRate: 'معدل الفائدة',
+      remainingBalance: 'الرصيد المتبقي', loanNumber: 'رقم القرض',
+      lenderName: 'اسم المقرض', disbursementDate: 'تاريخ الصرف',
+      termMonths: 'مدة القرض (أشهر)', status: 'الحالة',
+      description: 'الوصف', approvedAt: 'تاريخ الاعتماد',
+      specialist: 'المتخصص', fundName: 'اسم الصندوق',
+      fundType: 'نوع الصندوق', currentBalance: 'الرصيد الحالي',
+      targetAmount: 'المبلغ المستهدف', name: 'الاسم',
+      category: 'الفئة', condition: 'الحالة',
+      acquisitionDate: 'تاريخ الاقتناء', acquisitionCost: 'تكلفة الاقتناء',
+      currentValue: 'القيمة الحالية', surplus: 'فائض', deficit: 'عجز',
+    };
+
+    const lbl = (key) => FIELD_LABELS[key] || key;
+    const isObjectId = (val) => typeof val === 'string' && /^[a-f0-9]{24}$/.test(val);
+    const fmtNum = (n) => (typeof n === 'number') ? n.toLocaleString('ar-MA', { minimumFractionDigits: 2 }) : '-';
+    const fmtVal = (val) => {
+      if (val === null || val === undefined) return '-';
+      if (typeof val === 'number') return fmtNum(val);
       if (typeof val === 'boolean') return val ? 'نعم' : 'لا';
-      if (Array.isArray(val)) {
-        if (val.length === 0) return '-';
-        if (typeof val[0] === 'object') {
-          const keys = Object.keys(val[0]);
-          const headerRow = `<tr>${keys.map(k => `<th>${k}</th>`).join('')}</tr>`;
-          const bodyRows = val.map(item =>
-            `<tr>${keys.map(k => `<td>${renderValue(item[k])}</td>`).join('')}</tr>`
-          ).join('');
-          return `<table class="nested">${headerRow}${bodyRows}</table>`;
-        }
-        return val.join(', ');
-      }
-      if (typeof val === 'object') {
-        return Object.entries(val).map(([k, v]) => `<b>${k}:</b> ${renderValue(v)}`).join('<br>');
-      }
+      if (val === 'surplus') return 'فائض';
+      if (val === 'deficit') return 'عجز';
       return String(val);
     };
 
-    const dataRows = Object.entries(annex.data || {}).map(([key, val]) =>
-      `<tr><td class="key">${key}</td><td>${renderValue(val)}</td></tr>`
-    ).join('');
+    const data = annex.data || {};
+    let sectionsHtml = '';
+    const summaryItems = [];
+
+    for (const [key, val] of Object.entries(data)) {
+      if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'object' && val[0] !== null) {
+        const allKeys = [...new Set(val.flatMap(item => Object.keys(item)))];
+        const colKeys = allKeys.filter(k => {
+          if (k === '__v') return false;
+          if (k === '_id' && isObjectId(String(val[0][k] ?? ''))) return false;
+          return true;
+        });
+
+        const headerCells = colKeys.map(k => `<th>${lbl(k)}</th>`).join('');
+        const bodyRows = val.map(item => {
+          const cells = colKeys.map(k => {
+            const v = item[k];
+            const isNum = typeof v === 'number';
+            return `<td class="${isNum ? 'amount' : ''}">${fmtVal(v)}</td>`;
+          }).join('');
+          return `<tr>${cells}</tr>`;
+        }).join('');
+
+        sectionsHtml += `
+          <div class="section">
+            <h2 class="section-title">${lbl(key)}</h2>
+            <table><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>
+          </div>`;
+      } else if (!Array.isArray(val) && typeof val !== 'object') {
+        const isNeg = typeof val === 'number' && val < 0;
+        const isPos = typeof val === 'number' && val > 0;
+        summaryItems.push({ label: lbl(key), value: fmtVal(val), cls: isNeg ? 'neg' : isPos ? 'pos' : '' });
+      }
+    }
+
+    let summaryHtml = '';
+    if (summaryItems.length > 0) {
+      const cards = summaryItems.map(s => `
+        <div class="card">
+          <div class="card-label">${s.label}</div>
+          <div class="card-value ${s.cls}">${s.value}</div>
+        </div>`).join('');
+      summaryHtml = `<div class="section"><h2 class="section-title">ملخص</h2><div class="cards">${cards}</div></div>`;
+    }
+
+    const dateStr = new Date().toLocaleDateString('ar-MA', { year: 'numeric', month: 'long', day: 'numeric' });
 
     const html = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
-<head>
-<meta charset="UTF-8">
+<head><meta charset="UTF-8">
 <style>
-  body { font-family: Arial, sans-serif; padding: 24px; direction: rtl; }
-  h1 { text-align: center; font-size: 18px; border-bottom: 2px solid #333; padding-bottom: 8px; }
-  .subtitle { text-align: center; color: #555; margin-bottom: 20px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { border: 1px solid #ccc; padding: 6px 10px; }
-  th { background: #4472C4; color: #fff; }
-  td.key { background: #f0f0f0; font-weight: bold; width: 40%; }
-  .nested { width: 100%; font-size: 12px; }
-  .nested th { background: #7a9cdb; }
-</style>
-</head>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;600;700&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Noto Naskh Arabic','Segoe UI',Arial,sans-serif;direction:rtl;color:#1a1a2e;background:#fff}
+  .hdr{background:linear-gradient(135deg,#1a3a5c,#2d6a9f);color:#fff;padding:28px 36px}
+  .hdr h1{font-size:22px;text-align:center;margin-bottom:4px}
+  .hdr .badge{display:block;text-align:center;margin:6px auto}
+  .hdr .badge span{background:rgba(255,255,255,.2);padding:3px 16px;border-radius:20px;font-size:11px}
+  .hdr-meta{display:flex;justify-content:space-between;margin-top:12px;font-size:11px;opacity:.9}
+  .body{padding:24px 36px}
+  .section{margin-bottom:22px}
+  .section-title{font-size:14px;font-weight:700;color:#1a3a5c;padding:8px 14px;border-right:4px solid #2d6a9f;background:#f0f5fa;border-radius:0 6px 6px 0;margin-bottom:10px}
+  table{width:100%;border-collapse:collapse;font-size:11.5px}
+  thead tr{background:#2d6a9f}
+  th{color:#fff;font-weight:600;padding:9px 10px;text-align:center;font-size:11px}
+  td{padding:7px 10px;border-bottom:1px solid #e8ecf1;text-align:center}
+  td.amount{font-weight:600;text-align:left;direction:ltr}
+  tbody tr:nth-child(even){background:#f8fafc}
+  .cards{display:flex;flex-wrap:wrap;gap:10px}
+  .card{flex:1 1 180px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center}
+  .card-label{font-size:10px;color:#64748b;margin-bottom:5px;font-weight:600}
+  .card-value{font-size:17px;font-weight:700;color:#1a3a5c}
+  .card-value.pos{color:#16a34a}
+  .card-value.neg{color:#dc2626}
+  .ftr{margin-top:28px;padding:14px 36px;text-align:center;font-size:9px;color:#94a3b8;border-top:1px solid #e2e8f0}
+</style></head>
 <body>
-<h1>${annex.annexName}</h1>
-<div class="subtitle">${buildingName} - ${buildingAddress} | السنة المالية: ${fiscalYear}</div>
-<table>${dataRows}</table>
-</body>
-</html>`;
+<div class="hdr">
+  <h1>${annex.annexName || annexNumber}</h1>
+  <div class="badge"><span>${annexNumber}</span></div>
+  <div class="hdr-meta"><span>${buildingName} — ${buildingAddress}</span><span>السنة المالية: ${fiscalYear}</span></div>
+</div>
+<div class="body">
+  ${summaryHtml}
+  ${sectionsHtml}
+</div>
+<div class="ftr">
+  <div>تم الإنشاء بتاريخ ${dateStr}</div>
+  <div>وفقاً للقانون 18.00 والمرسوم 2-23-700 المتعلق بالقواعد المحاسبية الخاصة باتحاد الملاك المشتركين</div>
+</div>
+</body></html>`;
 
     const pdfBuffer = await pdfGeneratorHTML.htmlToPdf(html, false);
     res.setHeader('Content-Type', 'application/pdf');
