@@ -5,6 +5,9 @@ import Budget from '../models/Budget.js';
 import Building from '../models/Building.js';
 import AnnualRevenue from '../models/AnnualRevenue.js';
 import Annex from '../models/Annex.js';
+import JournalEntry from '../models/JournalEntry.js';
+import Account from '../models/Account.js';
+import JournalLine from '../models/JournalLine.js';
 import * as excelGenerator from '../utils/excelGenerator.js';
 import * as pdfGeneratorHTML from '../utils/pdfGeneratorHTML.js';
 
@@ -41,6 +44,85 @@ export const exportGeneralLedgerExcel = async (req, res) => {
     res.end();
   } catch (error) {
     console.error('Error exporting general ledger:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Export Journal (دفتر اليومية) to Excel
+ */
+export const exportJournalExcel = async (req, res) => {
+  try {
+    const { residenceId, year } = req.params;
+    const { startDate: qStart, endDate: qEnd } = req.query;
+    
+    let startDate, endDate, titleDate;
+
+    if (qStart && qEnd) {
+      startDate = new Date(qStart);
+      endDate = new Date(qEnd);
+      endDate.setHours(23, 59, 59, 999);
+      titleDate = `${startDate.getFullYear()}-${startDate.getMonth() + 1}-${startDate.getDate()} to ${endDate.getFullYear()}-${endDate.getMonth() + 1}-${endDate.getDate()}`;
+    } else {
+      const fiscalYear = parseInt(year);
+      startDate = new Date(fiscalYear, 0, 1);
+      endDate = new Date(fiscalYear, 11, 31, 23, 59, 59, 999);
+      titleDate = fiscalYear.toString();
+    }
+
+    const query = {
+      date: { $gte: startDate, $lte: endDate }
+    };
+
+    // residenceId check - ensure it's a valid ObjectId
+    if (residenceId && residenceId !== 'undefined' && mongoose.Types.ObjectId.isValid(residenceId)) {
+      query.residence_id = new mongoose.Types.ObjectId(residenceId);
+    }
+
+    const entries = await JournalEntry.find(query)
+      .populate('lines')
+      .sort({ date: 1, entryNumber: 1 });
+
+    const residence = await Building.findById(residenceId);
+    if (!residence) {
+      return res.status(404).json({ error: 'Residence not found' });
+    }
+
+    // Convert entries to lean objects to allow mutation
+    const processedEntries = entries.map(e => {
+      const entryObj = e.toObject();
+      return entryObj;
+    });
+
+    // Populate account names for lines
+    const allAccountNumbers = [...new Set(processedEntries.flatMap(e => e.lines.map(l => l.accountNumber)))];
+    const accounts = await Account.find({ number: { $in: allAccountNumbers } });
+    const accountMap = accounts.reduce((map, acc) => {
+      map[acc.number] = acc.name;
+      return map;
+    }, {});
+
+    processedEntries.forEach(entry => {
+      entry.lines.forEach(line => {
+        if (!line.accountName) {
+          line.accountName = accountMap[line.accountNumber] || 'Unknown';
+        }
+      });
+    });
+
+    const workbook = await excelGenerator.generateJournalExcel(
+      processedEntries,
+      { name: residence.building_name, address: residence.building_address },
+      titleDate
+    );
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Journal-${year}.xlsx"`);
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Error exporting journal:', error);
     res.status(500).json({ error: error.message });
   }
 };

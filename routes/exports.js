@@ -2,6 +2,7 @@ import express from 'express';
 const router = express.Router();
 import {
   exportGeneralLedgerExcel,
+  exportJournalExcel,
   exportBalanceSheetExcel,
   exportManagementAccountExcel,
   exportOwnerContributionsExcel,
@@ -24,6 +25,9 @@ router.use(auth);
 
 // Export General Ledger to Excel
 router.get('/excel/general-ledger/:residenceId/:year', exportGeneralLedgerExcel);
+
+// Export Journal to Excel
+router.get('/excel/journal/:residenceId/:year', exportJournalExcel);
 
 // Export Balance Sheet (Annex 3) to Excel
 router.get('/excel/balance-sheet/:residenceId/:year', exportBalanceSheetExcel);

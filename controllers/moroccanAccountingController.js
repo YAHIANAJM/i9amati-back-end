@@ -9,6 +9,7 @@ import Payment from '../models/Payment.js';
 import Apartment from '../models/Apartment.js';
 import AnnualRevenue from '../models/AnnualRevenue.js';
 import mongoose from 'mongoose';
+import * as DistributionLogic from '../utils/DistributionLogic.js';
 
 /**
  * GET /api/accounting/moroccan/chart-of-accounts
@@ -109,6 +110,107 @@ export const getJournalBook = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * POST /api/accounting/moroccan/journal
+ * Create a manual journal entry (Register a Process)
+ */
+export const createManualJournalEntry = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  
+  try {
+    const { residenceId, date, description, reference, lines } = req.body;
+    
+    if (!residenceId || !date || !description || !lines || lines.length === 0) {
+      throw new Error('Missing required fields: residenceId, date, description, lines');
+    }
+
+    // 1. Validate Balance
+    let totalDebit = 0;
+    let totalCredit = 0;
+    lines.forEach(line => {
+      totalDebit += parseFloat(line.debit || 0);
+      totalCredit += parseFloat(line.credit || 0);
+    });
+
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      throw new Error(`Entry is unbalanced. Total Debit: ${totalDebit}, Total Credit: ${totalCredit}`);
+    }
+
+    // 2. Determine Entry Number
+    const lastEntry = await JournalEntry.findOne({ residence_id: residenceId })
+      .sort({ entryNumber: -1 })
+      .limit(1);
+    
+    const entryNumber = (lastEntry?.entryNumber || 0) + 1;
+
+    // 3. Prepare the Journal Entry (Do NOT save yet)
+    const journalEntryId = new mongoose.Types.ObjectId();
+    
+    // 4. Create Journal Lines & General Ledger entries
+    const savedLines = [];
+    for (const lineData of lines) {
+      if (!lineData.debit && !lineData.credit) continue;
+
+      const journalLine = new JournalLine({
+        journalEntry: journalEntryId,
+        accountNumber: lineData.accountNumber,
+        debit: parseFloat(lineData.debit || 0),
+        credit: parseFloat(lineData.credit || 0),
+        description: lineData.description || description
+      });
+
+      await journalLine.save({ session });
+      savedLines.push(journalLine._id);
+
+      const ledgerEntry = new GeneralLedger({
+        residence_id: residenceId,
+        accountNumber: lineData.accountNumber,
+        journalEntry: journalEntryId,
+        date: new Date(date),
+        reference: reference,
+        description: lineData.description || description,
+        debit: parseFloat(lineData.debit || 0),
+        credit: parseFloat(lineData.credit || 0),
+        fiscalYear: new Date(date).getFullYear(),
+        fiscalPeriod: new Date(date).getMonth() + 1
+      });
+
+      await ledgerEntry.save({ session });
+    }
+
+    // 5. Save the Journal Entry ONCE at the end
+    const journalEntry = new JournalEntry({
+      _id: journalEntryId,
+      date: new Date(date),
+      description,
+      reference,
+      entryNumber,
+      residence_id: residenceId,
+      status: 'active',
+      lines: savedLines
+    });
+
+    await journalEntry.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(201).json({
+      success: true,
+      message: 'Process registered successfully in Journal',
+      entry: journalEntry
+    });
+
+  } catch (error) {
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    session.endSession();
+    res.status(400).json({ error: error.message });
   }
 };
 
@@ -616,45 +718,58 @@ export const createOwnerContribution = async (req, res) => {
  */
 export const createBulkContributions = async (req, res) => {
   try {
-    const { buildingId, contributionType, year, totalAmount, generalAssemblyRef } = req.body;
+    const { buildingId, contributionType, year, totalAmount, generalAssemblyRef, distributionMethod, floorWeights } = req.body;
     
     if (!buildingId || !contributionType || !year || !totalAmount) {
-      return res.status(400).json({ error: 'Missing required fields: buildingId, contributionType, year, totalAmount' });
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Validate contribution type
     const validTypes = ['regular', 'special', 'advance'];
     if (!validTypes.includes(contributionType)) {
-      return res.status(400).json({ error: 'Invalid contribution type. Must be: regular, special, or advance' });
+      return res.status(400).json({ error: 'Invalid contribution type' });
     }
 
-    // Get all apartments in this building with their ownership percentages
     const apartments = await Apartment.find({ 
       building: buildingId,
       representativeUser: { $exists: true, $ne: null }
     }).populate('representativeUser');
 
     if (apartments.length === 0) {
-      return res.status(404).json({ error: 'No apartments found in this building with representative users' });
+      return res.status(404).json({ error: 'No units with owners found' });
     }
 
-    // Calculate total percentage
-    const totalPercentage = apartments.reduce((sum, apt) => sum + (apt.percentage_of_apartment || 0), 0);
+    // Use Smart Distribution Engine
+    let distribution = [];
+    const method = distributionMethod || 'hissas';
 
-    if (totalPercentage === 0) {
-      return res.status(400).json({ error: 'Apartments do not have ownership percentages defined' });
+    switch (method) {
+      case 'hissas':
+        distribution = DistributionLogic.distributeByHissas(totalAmount, apartments);
+        break;
+      case 'equality':
+        distribution = DistributionLogic.distributeByEquality(totalAmount, apartments);
+        break;
+      case 'floor':
+        distribution = DistributionLogic.distributeByFloor(totalAmount, apartments, floorWeights);
+        break;
+      case 'mixed':
+        distribution = DistributionLogic.distributeByMixed(totalAmount, apartments);
+        break;
+      case 'building':
+        distribution = DistributionLogic.distributeByBuilding(totalAmount, apartments, 'hissas');
+        break;
+      default:
+        distribution = DistributionLogic.distributeByHissas(totalAmount, apartments);
     }
 
-    // Create contributions for each apartment
+    // Create contributions
     const contributions = [];
     const errors = [];
 
-    for (const apartment of apartments) {
+    for (const distItem of distribution) {
       try {
-        // Calculate this apartment's share based on ownership percentage
-        const percentage = apartment.percentage_of_apartment || 0;
-        const individualAmount = (totalAmount * percentage) / totalPercentage;
-
+        const apartment = apartments.find(a => a._id.toString() === distItem.apartmentId.toString());
+        
         // Check if contribution already exists
         const existing = await Contribution.findOne({
           owner: apartment.representativeUser._id,
@@ -663,20 +778,16 @@ export const createBulkContributions = async (req, res) => {
           contributionType
         });
 
-        if (existing) {
-          errors.push(`Contribution already exists for unit ${apartment.unit_code}`);
-          continue;
-        }
+        if (existing) continue;
 
-        // Create contribution
         const contribution = new Contribution({
           owner: apartment.representativeUser._id,
           unit: apartment._id,
           year: parseInt(year),
           contributionType,
-          dueAmount: Math.round(individualAmount * 100) / 100, // Round to 2 decimals
+          dueAmount: distItem.share,
           paidAmount: 0,
-          remaining: Math.round(individualAmount * 100) / 100,
+          remaining: distItem.share,
           status: 'unpaid',
           generalAssemblyRef: generalAssemblyRef || `AG-${year}-${contributionType.toUpperCase().substring(0,3)}`
         });
@@ -684,7 +795,7 @@ export const createBulkContributions = async (req, res) => {
         await contribution.save();
         contributions.push(contribution);
       } catch (error) {
-        errors.push(`Error for unit ${apartment.unit_code}: ${error.message}`);
+        errors.push(`Error for unit: ${error.message}`);
       }
     }
 
@@ -692,12 +803,134 @@ export const createBulkContributions = async (req, res) => {
       success: true,
       count: contributions.length,
       contributions,
-      totalAmount: parseFloat(totalAmount),
-      buildingId,
-      contributionType,
-      year,
       errors: errors.length > 0 ? errors : undefined
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * POST /api/accounting/moroccan/distribution-preview
+ * Simulate an expense distribution across units
+ */
+export const previewDistribution = async (req, res) => {
+  try {
+    const { buildingId, method, amount, floorWeights } = req.body;
+    
+    if (!buildingId || !method || !amount) {
+      return res.status(400).json({ error: 'Missing buildingId, method, or amount' });
+    }
+
+    const apartments = await Apartment.find({ building: buildingId });
+    
+    let result = [];
+    switch (method) {
+      case 'hissas':
+        result = DistributionLogic.distributeByHissas(amount, apartments);
+        break;
+      case 'equality':
+        result = DistributionLogic.distributeByEquality(amount, apartments);
+        break;
+      case 'floor':
+        result = DistributionLogic.distributeByFloor(amount, apartments, floorWeights);
+        break;
+      case 'mixed':
+        result = DistributionLogic.distributeByMixed(amount, apartments);
+        break;
+      case 'building':
+        result = DistributionLogic.distributeByBuilding(amount, apartments, 'hissas');
+        break;
+      default:
+        return res.status(400).json({ error: `Invalid distribution method: ${method}` });
+    }
+
+    res.json({
+      success: true,
+      method,
+      totalAmount: amount,
+      distribution: result
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/accounting/moroccan/inventory-book
+ * Get Inventory Book summary (دفتر الجرد) - Art 8
+ */
+export const getInventoryBook = async (req, res) => {
+  try {
+    const { residenceId, year } = req.query;
+    const fiscalYear = year ? parseInt(year) : new Date().getFullYear();
+    const asOfDate = new Date(fiscalYear, 11, 31);
+
+    // 1. Assets (Class 2, 3, 5 debit)
+    const assetsAccounts = await Account.find({ class: { $in: [2, 3] }, isActive: true });
+    let totalAssets = 0;
+    const assetsList = [];
+
+    for (const acc of assetsAccounts) {
+      const balance = await GeneralLedger.getAccountBalance(residenceId, acc.number, asOfDate);
+      if (balance !== 0) {
+        assetsList.push({ number: acc.number, name: acc.name, balance: Math.abs(balance) });
+        totalAssets += Math.abs(balance);
+      }
+    }
+
+    // 2. Liabilities & Equity (Class 1, 4, 5 credit)
+    const liabAccounts = await Account.find({ class: { $in: [1, 4] }, isActive: true });
+    let totalLiabilities = 0;
+    const liabList = [];
+
+    for (const acc of liabAccounts) {
+      const balance = await GeneralLedger.getAccountBalance(residenceId, acc.number, asOfDate);
+      if (balance !== 0) {
+        liabList.push({ number: acc.number, name: acc.name, balance: Math.abs(balance) });
+        totalLiabilities += Math.abs(balance);
+      }
+    }
+
+    // 3. Treasury (Class 5)
+    const treasuryAccounts = await Account.find({ class: 5, isActive: true });
+    let totalTreasury = 0;
+    const treasuryList = [];
+
+    for (const acc of treasuryAccounts) {
+      const balance = await GeneralLedger.getAccountBalance(residenceId, acc.number, asOfDate);
+      if (balance !== 0) {
+        treasuryList.push({ number: acc.number, name: acc.name, balance: balance }); // Pos for bank, neg for debt
+        totalTreasury += balance;
+      }
+    }
+
+    // 4. Result (Surplus/Deficit) from Income Statement logic
+    const results = await Account.find({ class: { $in: [6, 7] }, isActive: true });
+    let totalRev = 0;
+    let totalExp = 0;
+
+    for (const acc of results) {
+      const balance = await GeneralLedger.getAccountBalance(residenceId, acc.number, asOfDate);
+      if (acc.class === 7) totalRev += Math.abs(balance);
+      if (acc.class === 6) totalExp += Math.abs(balance);
+    }
+
+    res.json({
+      success: true,
+      fiscalYear,
+      inventory: {
+        assets: { total: totalAssets, items: assetsList },
+        liabilities: { total: totalLiabilities, items: liabList },
+        treasury: { total: totalTreasury, items: treasuryList },
+        result: {
+          surplus: totalRev > totalExp ? totalRev - totalExp : 0,
+          deficit: totalExp > totalRev ? totalExp - totalRev : 0,
+          type: totalRev >= totalExp ? 'surplus' : 'deficit'
+        }
+      }
+    });
+
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -15,7 +15,10 @@ import {
   createBulkContributions,
   getAnnualRevenue,
   recalculateAnnualRevenue,
-  getAccountingDashboard
+  getAccountingDashboard,
+  previewDistribution,
+  getInventoryBook,
+  createManualJournalEntry
 } from '../controllers/moroccanAccountingController.js';
 import { auth, requireRole } from '../middleware/auth.js';
 
@@ -29,7 +32,9 @@ router.get('/chart-of-accounts', getChartOfAccounts);
 
 // Digital Ledgers
 router.get('/journal', getJournalBook); // دفتر اليومية
+router.post('/journal', requireRole('union_agent'), createManualJournalEntry); // تسجيل عملية جديدة
 router.get('/general-ledger', getGeneralLedger); // دفتر الأستاذ
+router.get('/inventory-book', getInventoryBook); // دفتر الجرد - Art 8
 
 // Budget System
 router.get('/budget-comparison', getBudgetComparison); // 3-year comparison (n-1, n, n+1)
@@ -50,6 +55,7 @@ router.post('/loans', requireRole('union_agent'), createLoan);
 router.get('/owner-contributions', getOwnerContributions);
 router.post('/owner-contributions', requireRole('union_agent'), createOwnerContribution);
 router.post('/bulk-contributions', requireRole('union_agent'), createBulkContributions);
+router.post('/distribution-preview', requireRole('union_agent'), previewDistribution);
 
 // Annual Revenue Calculation & Classification (Phase 1)
 router.get('/annual-revenue/:residenceId/:year', getAnnualRevenue);

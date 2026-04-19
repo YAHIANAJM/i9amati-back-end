@@ -398,3 +398,120 @@ export const generateCompleteAccountingExcel = async (allData, residenceInfo, fi
 
   return workbook;
 };
+
+/**
+ * Generate Excel export for Journal (دفتر اليومية)
+ */
+export const generateJournalExcel = async (journalEntries, residenceInfo, fiscalYear) => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet('Journal');
+
+  // RTL for Arabic
+  worksheet.views = [{ rightToLeft: true }];
+
+  // Header
+  worksheet.mergeCells('A1:G1');
+  worksheet.getCell('A1').value = `دفتر اليومية (Journal) - ${residenceInfo.name}`;
+  worksheet.getCell('A1').font = { bold: true, size: 16 };
+  worksheet.getCell('A1').alignment = { horizontal: 'center' };
+
+  worksheet.mergeCells('A2:G2');
+  worksheet.getCell('A2').value = `الفترة (Period): ${fiscalYear}`;
+  worksheet.getCell('A2').alignment = { horizontal: 'center' };
+
+  worksheet.addRow([]);
+
+  // Column headers
+  const headerRow = worksheet.addRow([
+    'الرقم',
+    'التاريخ',
+    'المرجع',
+    'رقم الحساب',
+    'البيان (الوصف)',
+    'مدين',
+    'دائن'
+  ]);
+
+  headerRow.eachCell((cell) => {
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1a3a5c' },
+    };
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.alignment = { horizontal: 'center' };
+    cell.border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    };
+  });
+
+  // Data rows
+  journalEntries.forEach((entry) => {
+    // Add an empty separator row before each entry (except the first one)
+    if (worksheet.rowCount > 5) {
+      worksheet.addRow([]);
+    }
+
+    // Entry Header Row (Grey background)
+    const headerData = [
+      entry.entryNumber || '',
+      new Date(entry.date).toLocaleDateString('ar-MA'),
+      entry.reference || '',
+      '',
+      entry.description,
+      '',
+      ''
+    ];
+    const entryHeaderRow = worksheet.addRow(headerData);
+    entryHeaderRow.font = { bold: true };
+    entryHeaderRow.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFF2F2F2' },
+      };
+      cell.border = {
+        top: { style: 'thin' },
+        bottom: { style: 'thin' }
+      };
+    });
+
+    // Detailed Line Rows
+    entry.lines.forEach((line) => {
+      // Combine Account Name and Line Description for better context
+      const cellDescription = line.description 
+        ? `${line.accountName} - ${line.description}`
+        : line.accountName;
+
+      const lineRow = worksheet.addRow([
+        '',
+        '',
+        '',
+        line.accountNumber,
+        cellDescription,
+        line.debit || '',
+        line.credit || ''
+      ]);
+      
+      lineRow.getCell(6).numFmt = '#,##0.00';
+      lineRow.getCell(7).numFmt = '#,##0.00';
+      lineRow.getCell(6).alignment = { horizontal: 'left' };
+      lineRow.getCell(7).alignment = { horizontal: 'left' };
+      lineRow.getCell(4).font = { name: 'Courier New' };
+    });
+  });
+
+  // Column widths
+  worksheet.getColumn(1).width = 10;
+  worksheet.getColumn(2).width = 15;
+  worksheet.getColumn(3).width = 20;
+  worksheet.getColumn(4).width = 15;
+  worksheet.getColumn(5).width = 45;
+  worksheet.getColumn(6).width = 15;
+  worksheet.getColumn(7).width = 15;
+
+  return workbook;
+};
