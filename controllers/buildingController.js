@@ -847,6 +847,9 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         percentage_of_apartment: aptDetails.percentage_of_apartment
           ? parseFloat(aptDetails.percentage_of_apartment)
           : undefined,
+        percentage_of_residence: aptDetails.percentage_of_residence
+          ? parseFloat(aptDetails.percentage_of_residence)
+          : undefined,
         building: newBuilding._id,
         agent: agent._id,
         owners: [], // ← will hold embedded owner objects (not User refs)
