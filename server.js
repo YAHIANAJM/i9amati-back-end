@@ -46,11 +46,27 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow same-origin requests (no Origin header)
+    // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error("Not allowed by CORS"));
+
+    const allowed = [
+      process.env.FRONTEND_URL,
+      "https://i9amati-front-end.vercel.app",
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "http://localhost:5174",
+    ].filter(Boolean);
+
+    if (allowed.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log("❌ Blocked CORS origin:", origin);
+
+    // IMPORTANT: don't throw error (just reject)
+    return callback(null, false);
   },
+
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
