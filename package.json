@@ -10,7 +10,7 @@
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
     "@sparticuz/chromium": "^131.0.1",
-    "axios": "^1.13.4",
+    "axios": "^1.15.2",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^2.9.0",
     "connect-pg-simple": "^10.0.0",
