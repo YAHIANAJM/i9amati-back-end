@@ -1,11 +1,5 @@
 // backend/routes/auth.js
-// Basic Express authentication routes template
-
 import express from "express";
-const router = express.Router();
-
-// Example login route
-
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -13,41 +7,51 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
+const router = express.Router();
+
+// Login
 router.post("/login", async (req, res) => {
   const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required" });
+  }
+
   try {
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
+
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
-    // Create JWT token
+
+    const secret = process.env.JWT_SECRET;
+    if (!secret) return res.status(500).json({ message: "Server configuration error" });
+
     const token = jwt.sign(
       { id: user._id, role: user.role },
-      process.env.JWT_SECRET || "secret",
+      secret,
       { expiresIn: "1d" }
     );
 
-    // Set HttpOnly cookie
     res.cookie('token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // true in production
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // 'none' for cross-site cookie in prod
-      maxAge: 24 * 60 * 60 * 1000 // 1 day
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      maxAge: 24 * 60 * 60 * 1000
     });
 
-    // Return user info (excluding password_hash)
     const { password_hash, ...userData } = user.toObject();
     res.json({ token, user: userData });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-// Check Logged In User
+// Get current user
 router.get("/me", async (req, res) => {
   try {
     let token = req.cookies.token;
@@ -59,12 +63,14 @@ router.get("/me", async (req, res) => {
 
     if (!token) return res.status(401).json({ message: "Not authenticated" });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
+    const secret = process.env.JWT_SECRET;
+    if (!secret) return res.status(500).json({ message: "Server configuration error" });
+
+    const decoded = jwt.verify(token, secret);
     let user = await User.findById(decoded.id).select("-password_hash");
 
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // For union agents, find their building
     if (user.role === 'union_agent') {
       const Building = (await import('../models/Building.js')).default;
       const building = await Building.findOne({ agent: user._id }).select('_id building_name building_code');
@@ -78,6 +84,7 @@ router.get("/me", async (req, res) => {
   }
 });
 
+// Logout
 router.post("/logout", (req, res) => {
   res.clearCookie('token', {
     httpOnly: true,
@@ -87,10 +94,9 @@ router.post("/logout", (req, res) => {
   res.json({ message: "Logged out successfully" });
 });
 
-// Example register route
+// Register — TODO: implement registration logic
 router.post("/register", (req, res) => {
-  // TODO: Implement registration logic
-  res.send("Register route");
+  res.status(501).json({ message: "Registration not implemented" });
 });
 
 export default router;

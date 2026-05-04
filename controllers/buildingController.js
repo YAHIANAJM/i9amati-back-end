@@ -1,13 +1,122 @@
-// ========================================
-// FILE 1: backend/controllers/buildingController.js
-// ========================================
 import Building from "../models/Building.js";
 import Apartment from "../models/Apartment.js";
 import User from "../models/User.js";
+import Notification from "../models/Notification.js";
+import emailService from "../services/emailService.js";
 import bcrypt from "bcryptjs";
 import Group from "../models/Group.js";
 import crypto from "crypto";
 import mongoose from "mongoose";
+
+// ─── Credential encryption helpers ──────────────────────────────────────────
+// Encrypts a credential (e.g. CIN) with AES-256-GCM so it can be decrypted
+// by the union agent but is never stored as plaintext.
+const CRED_KEY = Buffer.from(
+  (process.env.CREDENTIAL_ENCRYPTION_KEY || '').padEnd(64, '0').slice(0, 64),
+  'hex'
+);
+
+function encryptCredential(plaintext) {
+  if (!process.env.CREDENTIAL_ENCRYPTION_KEY) {
+    throw new Error('CREDENTIAL_ENCRYPTION_KEY is not set');
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', CRED_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+}
+
+export function decryptCredential(ciphertext) {
+  const [ivHex, tagHex, dataHex] = ciphertext.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const tag = Buffer.from(tagHex, 'hex');
+  const data = Buffer.from(dataHex, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', CRED_KEY, iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(data) + decipher.final('utf8');
+}
+
+/**
+ * Notify a union agent that another building declared shared parts with theirs.
+ * Sends both an in-app notification and an email. Errors are swallowed so they
+ * never break the main building-creation flow.
+ */
+async function notifySharedParts(recipientAgentId, newBuilding, theirBuilding, session = null) {
+  try {
+    const recipient = await User.findById(recipientAgentId).select("name email").session(session);
+    const sender = await User.findById(newBuilding.agent).select("name email").session(session);
+    if (!recipient || !sender) return;
+
+    const newBldName = newBuilding.building_name || newBuilding.propertyPlanNumber || "عمارة جديدة";
+    const theirBldName = theirBuilding.building_name || theirBuilding.propertyPlanNumber || "عمارتكم";
+
+
+    // 1️⃣  In-app notification for the RECIPIENT
+    await Notification.create(
+      [
+        {
+          user: recipient._id,
+          title: "إشعار: أجزاء مشتركة (قيد المراجعة)",
+          message: `تفيدكم إدارة "${newBldName}" (الوكيل: ${sender.name}) بأن لديها أجزاء مشتركة مع "${theirBldName}". يرجى انتظار رفع الوثيقة القانونية من طرفهم للمراجعة والقبول.`,
+          type: "document",
+          priority: "high",
+          reference_id: newBuilding._id,
+          reference_type: "Building",
+          metadata: {
+            action: "view_shared_parts_claim",
+            newBuildingId: newBuilding._id,
+            senderName: sender.name,
+          },
+        },
+      ],
+      { session },
+    );
+
+    // 2️⃣  In-app notification for the SENDER
+    await Notification.create(
+      [
+        {
+          user: sender._id,
+          title: "تذكير: رفع وثيقة الأجزاء المشتركة",
+          message: `لقد صرحتم بوجود أجزاء مشتركة مع "${theirBldName}". يرجى رفع الوثيقة القانونية المثبتة لذلك ليتمكن الوكيل "${recipient.name}" من مراجعتها وقبول الربط.`,
+          type: "document",
+          priority: "high",
+          reference_id: newBuilding._id,
+          reference_type: "Building",
+          metadata: {
+            action: "upload_shared_parts_document",
+            recipientName: recipient.name,
+          },
+        },
+      ],
+      { session },
+    );
+
+    // 3️⃣ Email notification for the RECIPIENT
+    await emailService.sendEmail({
+      to: recipient.email,
+      subject: `I9amati — أجزاء مشتركة: "${newBldName}"`,
+      text: `مرحباً ${recipient.name}،\n\nتفيدكم إدارة "${newBldName}" (الوكيل: ${sender.name}) بأن لديها أجزاء مشتركة مع "${theirBldName}".\nيرجى انتظار رفع الوثيقة القانونية من طرفهم للمراجعة والقبول.`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:auto;padding:20px;border:1px solid #eee;border-radius:10px;direction:rtl">
+          <h2 style="color:#0d9488">إشعار: ادعاء أجزاء مشتركة</h2>
+          <p>مرحباً <strong>${recipient.name}</strong>،</p>
+          <p>تفيدكم إدارة <strong>"${newBldName}"</strong> (الوكيل: <strong>${sender.name}</strong>) بأن لديها أجزاء مشتركة مع <strong>"${theirBldName}"</strong>.</p>
+          <p>يرجى انتظار قيام الوكيل الآخر برفع الوثيقة القانونية المثبتة لذلك في قسم الوثائق ليتسنى لكم مراجعتها وقبول الربط أو رفضه.</p>
+          <div style="text-align:center;margin-top:30px">
+            <a href="${process.env.FRONTEND_URL}/notifications" style="background-color:#0d9488;color:white;padding:12px 24px;text-decoration:none;border-radius:5px;font-weight:bold">عرض الإشعارات</a>
+          </div>
+          <hr style="margin-top:40px;border:0;border-top:1px solid #eee"/>
+          <p style="font-size:12px;color:#6b7280;text-align:center">I9amati Platform — إشعار تلقائي</p>
+        </div>`,
+    });
+
+    console.log(`[SharedParts] ✅ SUCCESS: Notified both recipient (${recipient.email}) and sender (${sender.email})`);
+  } catch (err) {
+    console.warn("[SharedParts] ⚠️ Notification failed (non-blocking):", err.message);
+  }
+}
 
 /**
  * GET /api/buildings
@@ -21,13 +130,17 @@ export const getBuildings = async (req, res) => {
     const skip = (page - 1) * limit;
 
     const { searchBuilding, searchApartment, searchOwner } = req.query;
-    let query = {};
+    let query = { agent: new mongoose.Types.ObjectId(req.user.id) };
+
+    // Escape special regex characters to prevent ReDoS / injection
+    const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     // 1. Filter by Building Name or Code
     if (searchBuilding) {
+      const safe = escapeRegex(searchBuilding);
       query.$or = [
-        { building_name: { $regex: searchBuilding, $options: "i" } },
-        { building_code: { $regex: searchBuilding, $options: "i" } },
+        { building_name: { $regex: safe, $options: "i" } },
+        { building_code: { $regex: safe, $options: "i" } },
       ];
     }
 
@@ -35,12 +148,13 @@ export const getBuildings = async (req, res) => {
     if (searchApartment || searchOwner) {
       let apartmentQuery = {};
       if (searchApartment) {
-        apartmentQuery.unit_code = { $regex: searchApartment, $options: "i" };
+        apartmentQuery.unit_code = { $regex: escapeRegex(searchApartment), $options: "i" };
       }
       if (searchOwner) {
+        const safeOwner = escapeRegex(searchOwner);
         apartmentQuery.$or = [
-          { "owners.firstName": { $regex: searchOwner, $options: "i" } },
-          { "owners.lastName": { $regex: searchOwner, $options: "i" } },
+          { "owners.firstName": { $regex: safeOwner, $options: "i" } },
+          { "owners.lastName": { $regex: safeOwner, $options: "i" } },
         ];
       }
 
@@ -72,6 +186,14 @@ export const getBuildings = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "residences",
+          localField: "residence",
+          foreignField: "_id",
+          as: "residenceInfo",
+        },
+      },
+      {
         $addFields: {
           apartmentCount: { $size: "$apartments" },
           ownerCount: {
@@ -81,9 +203,11 @@ export const getBuildings = async (req, res) => {
               in: { $add: ["$$value", { $size: "$$this.owners" }] },
             },
           },
+          residenceName: { $arrayElemAt: ["$residenceInfo.name", 0] },
+          residenceId: { $arrayElemAt: ["$residenceInfo._id", 0] },
         },
       },
-      { $project: { aptDetails: 0 } },
+      { $project: { aptDetails: 0, residenceInfo: 0 } },
     ]);
 
     const totalCount = await Building.countDocuments(query);
@@ -115,6 +239,9 @@ export const getBuildings = async (req, res) => {
       apartments: b.apartments || [],
       apartmentCount: b.apartmentCount || 0,
       ownerCount: b.ownerCount || 0,
+      union_type: b.union_type || 'immeuble',
+      residenceId: b.residenceId || null,
+      residenceName: b.residenceName || null,
       createdAt: b.createdAt,
       updatedAt: b.updatedAt,
     }));
@@ -247,6 +374,7 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
         ? parseInt(building.totalUnits, 10)
         : undefined,
       original_title_number: building.propertyPlanNumber?.trim(),
+      propertyPlanNumber: building.propertyPlanNumber?.trim(), // FIX: Map this to the actual field used for linking
       has_garage:
         building.hasGarage === true ||
         building.hasGarage === "true" ||
@@ -270,86 +398,10 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       agent: agent._id,
     };
 
+    console.log(`[SharedParts] Creating new building "${buildingData.building_name}" with plan: ${buildingData.propertyPlanNumber}`);
+
     const newBuilding = new Building(buildingData);
     await newBuilding.save({ session });
-
-    // --- Shared-title linking logic (for multiple-apartment flow) ---
-    try {
-      const referencedPlan =
-        building.sharedWithTitleDeed?.trim() ||
-        building.shared_with_title_deed?.trim();
-
-      if (referencedPlan) {
-        const existingSharedBuilding = await Building.findOne({
-          propertyPlanNumber: referencedPlan,
-          _id: { $ne: newBuilding._id },
-        }).session(session);
-
-        if (existingSharedBuilding) {
-          await Building.findByIdAndUpdate(
-            newBuilding._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed: referencedPlan,
-            },
-            { session },
-          );
-
-          await Building.findByIdAndUpdate(
-            existingSharedBuilding._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed:
-                newBuilding.propertyPlanNumber ||
-                building.propertyPlanNumber?.trim(),
-            },
-            { session },
-          );
-        } else {
-          await Building.findByIdAndUpdate(
-            newBuilding._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed: referencedPlan,
-            },
-            { session },
-          );
-        }
-      }
-
-      if (newBuilding.propertyPlanNumber) {
-        const pendingBuildings = await Building.find({
-          sharedWithTitleDeed: newBuilding.propertyPlanNumber,
-          hasSharedParts: true,
-          _id: { $ne: newBuilding._id },
-        }).session(session);
-
-        for (const pending of pendingBuildings) {
-          await Building.findByIdAndUpdate(
-            pending._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed: pending.propertyPlanNumber,
-            },
-            { session },
-          );
-
-          await Building.findByIdAndUpdate(
-            newBuilding._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed: pending.propertyPlanNumber,
-            },
-            { session },
-          );
-        }
-      }
-    } catch (linkErr) {
-      console.warn(
-        "Warning: shared-title linking failed:",
-        linkErr.message || linkErr,
-      );
-    }
 
     // --- Shared-title linking logic ---
     try {
@@ -358,45 +410,43 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
         building.shared_with_title_deed?.trim();
 
       if (referencedPlan) {
-        // If target exists, link both ways. Otherwise save unconfirmed link on this building.
+        console.log(`[SharedParts] Found claim: Shared parts with plan "${referencedPlan}"`);
         const existingSharedBuilding = await Building.findOne({
           propertyPlanNumber: referencedPlan,
           _id: { $ne: newBuilding._id },
         }).session(session);
 
         if (existingSharedBuilding) {
+          console.log(`[SharedParts] SUCCESS: Target building "${existingSharedBuilding.building_name || existingSharedBuilding.propertyPlanNumber}" found.`);
           await Building.findByIdAndUpdate(
             newBuilding._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed: referencedPlan,
-            },
+            { hasSharedParts: true, sharedWithTitleDeed: referencedPlan },
             { session },
           );
-
           await Building.findByIdAndUpdate(
             existingSharedBuilding._id,
             {
               hasSharedParts: true,
-              sharedWithTitleDeed:
-                newBuilding.propertyPlanNumber ||
-                building.propertyPlanNumber?.trim(),
+              sharedWithTitleDeed: newBuilding.propertyPlanNumber || building.propertyPlanNumber?.trim(),
             },
             { session },
           );
+          // Notify the other building's agent
+          if (existingSharedBuilding.agent) {
+             console.log(`[SharedParts] Triggering notification to agent: ${existingSharedBuilding.agent}`);
+             await notifySharedParts(existingSharedBuilding.agent, newBuilding, existingSharedBuilding, session);
+          }
         } else {
+          console.log(`[SharedParts] INFO: Target building with plan "${referencedPlan}" not found yet. Saving claim as pending.`);
           await Building.findByIdAndUpdate(
             newBuilding._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed: referencedPlan,
-            },
+            { hasSharedParts: true, sharedWithTitleDeed: referencedPlan },
             { session },
           );
         }
       }
 
-      // Also check if any existing building previously referenced THIS building's plan
+      // Mutual confirmation check
       if (newBuilding.propertyPlanNumber) {
         const pendingBuildings = await Building.find({
           sharedWithTitleDeed: newBuilding.propertyPlanNumber,
@@ -404,33 +454,30 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
           _id: { $ne: newBuilding._id },
         }).session(session);
 
+        if (pendingBuildings.length > 0) {
+           console.log(`[SharedParts] Found ${pendingBuildings.length} pending buildings that were waiting for THIS plan.`);
+        }
+
         for (const pending of pendingBuildings) {
-          // Ensure mutual link
+          console.log(`[SharedParts] Activating link for building: ${pending.building_name}`);
           await Building.findByIdAndUpdate(
             pending._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed: pending.propertyPlanNumber,
-            },
+            { hasSharedParts: true, sharedWithTitleDeed: pending.propertyPlanNumber },
             { session },
           );
-
           await Building.findByIdAndUpdate(
             newBuilding._id,
-            {
-              hasSharedParts: true,
-              sharedWithTitleDeed: pending.propertyPlanNumber,
-            },
+            { hasSharedParts: true, sharedWithTitleDeed: pending.propertyPlanNumber },
             { session },
           );
+          if (pending.agent) {
+            console.log(`[SharedParts] Notifying agent: ${pending.agent}`);
+            await notifySharedParts(pending.agent, newBuilding, pending, session);
+          }
         }
       }
     } catch (linkErr) {
-      // Don't fail the whole transaction for linking issues; log and continue
-      console.warn(
-        "Warning: shared-title linking failed:",
-        linkErr.message || linkErr,
-      );
+      console.warn(" [SharedParts] Linking logic failed:", linkErr.message);
     }
 
     // 3️⃣ Create apartment with correct field mapping
@@ -522,7 +569,7 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
         newApartment.ownerCredentials.push({
           owner: representativeUser._id,
           email: email,
-          password: nationalId, // Plaintext for agent retrieval
+          password: encryptCredential(nationalId), // AES-256 encrypted
         });
         newApartment.representativeUser = representativeUser._id;
 
@@ -656,6 +703,85 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
     const newBuilding = new Building(buildingData);
     await newBuilding.save({ session });
 
+    console.log(`[SharedParts] Creating new building (multi-apt) "${newBuilding.building_name}" with plan: ${newBuilding.propertyPlanNumber}`);
+
+    // --- Shared-title linking logic ---
+    try {
+      const referencedPlan =
+        building.sharedWithTitleDeed?.trim() ||
+        building.shared_with_title_deed?.trim();
+
+      if (referencedPlan) {
+        console.log(`[SharedParts] Found claim: Shared parts with plan "${referencedPlan}"`);
+        const existingSharedBuilding = await Building.findOne({
+          propertyPlanNumber: referencedPlan,
+          _id: { $ne: newBuilding._id },
+        }).session(session);
+
+        if (existingSharedBuilding) {
+          console.log(`[SharedParts] SUCCESS: Target building "${existingSharedBuilding.building_name || existingSharedBuilding.propertyPlanNumber}" found.`);
+          await Building.findByIdAndUpdate(
+            newBuilding._id,
+            { hasSharedParts: true, sharedWithTitleDeed: referencedPlan },
+            { session },
+          );
+          await Building.findByIdAndUpdate(
+            existingSharedBuilding._id,
+            {
+              hasSharedParts: true,
+              sharedWithTitleDeed: newBuilding.propertyPlanNumber || building.propertyPlanNumber?.trim(),
+            },
+            { session },
+          );
+          // Notify the other building's agent
+          if (existingSharedBuilding.agent) {
+             console.log(`[SharedParts] Triggering notification to agent: ${existingSharedBuilding.agent}`);
+             await notifySharedParts(existingSharedBuilding.agent, newBuilding, existingSharedBuilding, session);
+          }
+        } else {
+          console.log(`[SharedParts] INFO: Target building with plan "${referencedPlan}" not found yet. Saving claim as pending.`);
+          await Building.findByIdAndUpdate(
+            newBuilding._id,
+            { hasSharedParts: true, sharedWithTitleDeed: referencedPlan },
+            { session },
+          );
+        }
+      }
+
+      // Mutual confirmation check
+      if (newBuilding.propertyPlanNumber) {
+        const pendingBuildings = await Building.find({
+          sharedWithTitleDeed: newBuilding.propertyPlanNumber,
+          hasSharedParts: true,
+          _id: { $ne: newBuilding._id },
+        }).session(session);
+
+        if (pendingBuildings.length > 0) {
+           console.log(`[SharedParts] Found ${pendingBuildings.length} pending buildings that were waiting for THIS plan.`);
+        }
+
+        for (const pending of pendingBuildings) {
+          console.log(`[SharedParts] Activating link for building: ${pending.building_name}`);
+          await Building.findByIdAndUpdate(
+            pending._id,
+            { hasSharedParts: true, sharedWithTitleDeed: pending.propertyPlanNumber },
+            { session },
+          );
+          await Building.findByIdAndUpdate(
+            newBuilding._id,
+            { hasSharedParts: true, sharedWithTitleDeed: pending.propertyPlanNumber },
+            { session },
+          );
+          if (pending.agent) {
+            console.log(`[SharedParts] Notifying agent: ${pending.agent}`);
+            await notifySharedParts(pending.agent, newBuilding, pending, session);
+          }
+        }
+      }
+    } catch (linkErr) {
+      console.warn(" [SharedParts] Linking logic mapping failed:", linkErr.message);
+    }
+
     // 3️⃣ Process each apartment and its owners
     const createdApartments = [];
     const createdOwners = []; // Only for representative owners
@@ -720,6 +846,9 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         main_plot_number: aptDetails.main_plot_number?.trim(),
         percentage_of_apartment: aptDetails.percentage_of_apartment
           ? parseFloat(aptDetails.percentage_of_apartment)
+          : undefined,
+        percentage_of_residence: aptDetails.percentage_of_residence
+          ? parseFloat(aptDetails.percentage_of_residence)
           : undefined,
         building: newBuilding._id,
         agent: agent._id,
@@ -798,7 +927,7 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         newApartment.ownerCredentials.push({
           owner: representativeUser._id,
           email: repEmail,
-          password: nationalId, // Plaintext for agent retrieval
+          password: encryptCredential(nationalId), // AES-256 encrypted
         });
 
         createdOwners.push({
@@ -1108,7 +1237,7 @@ export const addApartmentWithOwnersToBuilding = async (req, res) => {
       newApartment.ownerCredentials.push({
         owner: representativeUser._id,
         email: repEmail,
-        password: nationalId, // Plaintext for agent retrieval
+        password: encryptCredential(nationalId), // AES-256 encrypted
       });
 
       // Update embedded email matched for Rep to be the generated system email

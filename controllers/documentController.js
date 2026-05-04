@@ -101,9 +101,11 @@ export const searchDocuments = async (req, res) => {
 
     // Apply text search if query provided
     if (query) {
-      const searchRegex = new RegExp(query, 'i');
-      results = results.filter(doc => 
-        searchRegex.test(doc.title) || 
+      // Escape special regex characters to prevent ReDoS
+      const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(safeQuery, 'i');
+      results = results.filter(doc =>
+        searchRegex.test(doc.title) ||
         searchRegex.test(doc.description) ||
         (doc.tags && doc.tags.some(tag => searchRegex.test(tag)))
       );

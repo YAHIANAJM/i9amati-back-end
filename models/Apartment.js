@@ -23,6 +23,7 @@ const ApartmentSchema = new mongoose.Schema(
     // Ownership shares
     percentage_of_apartment: { type: Number, min: 0, max: 100 }, // e.g., 2.5
     land_share_ratio: { type: String }, // e.g., "1.8%"
+    percentage_of_residence: { type: Number, min: 0, max: 100 }, // apartment's share in the overall إقامة compound
     common_share_ratio: { type: String },
 
     // Building structure
@@ -67,7 +68,7 @@ const ApartmentSchema = new mongoose.Schema(
       {
         owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         email: { type: String },
-        password: { type: String }, // Plaintext password (CIN) for retrieval
+        password: { type: String }, // AES-256-GCM encrypted credential (use decryptCredential() to read)
       },
     ],
   },
