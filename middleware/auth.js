@@ -9,6 +9,8 @@ export const auth = async (req, res, next) => {
     return res.status(401).json({ error: 'No token' });
   }
 
+
+  
   try {
     const secret = process.env.JWT_SECRET;
     if (!secret) throw new Error('JWT_SECRET not configured');
