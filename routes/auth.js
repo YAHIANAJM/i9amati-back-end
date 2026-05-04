@@ -54,7 +54,13 @@ router.post("/login", async (req, res) => {
 // Get current user
 router.get("/me", async (req, res) => {
   try {
-    const token = req.cookies.token;
+    let token = req.cookies.token;
+    
+    // Fallback to Authorization header if cookie is missing
+    if (!token && req.headers.authorization) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
     if (!token) return res.status(401).json({ message: "Not authenticated" });
 
     const secret = process.env.JWT_SECRET;

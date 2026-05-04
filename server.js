@@ -21,6 +21,8 @@ import annexesRoutes from "./routes/annexes.js";
 import exportsRoutes from "./routes/exports.js";
 import documentRoutes from "./routes/documents.js";
 import notificationRoutes from "./routes/notifications.js";
+
+import votingRoutes from "./routes/voting.js";
 import residenceRoutes from "./routes/Residence.js";
 
 dotenv.config();
@@ -120,6 +122,7 @@ app.use("/api/exports", exportsRoutes);
 app.use("/api/accounting", accountingRoutes);
 app.use("/api/documents", documentRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/voting", votingRoutes);
 app.use("/api/residences", residenceRoutes);
 
 // ─── Health check ────────────────────────────────────────────────────────────
