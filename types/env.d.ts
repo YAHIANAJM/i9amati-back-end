@@ -6,7 +6,6 @@ declare namespace NodeJS {
           SESSION_SECRET: string;
           FRONTEND_URL: string;
           JWT_SECRET: string;
-          CREDENTIAL_ENCRYPTION_KEY: string;
           CMI_MERCHANT_ID: string;
           CMI_STORE_KEY: string;
           CMI_API_KEY: string;
