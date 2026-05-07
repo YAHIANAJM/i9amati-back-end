@@ -53,6 +53,8 @@ const corsOptions = {
 
     const allowed = [
       process.env.FRONTEND_URL,
+      "https://iqamati.ma",
+      "https://www.iqamati.ma",
       "https://i9amati-front-end.vercel.app",
       "http://localhost:3000",
       "http://localhost:5173",
