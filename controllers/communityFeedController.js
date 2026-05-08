@@ -324,7 +324,7 @@ export const getAllGroups = async (req, res) => {
 
     const { page = 1, limit = 10 } = paginationResult.data;
 
-    const groups = await Group.find()
+    const groups = await Group.find({ managers: req.user.id })
       .populate("managers", "name  email")
       .populate("building", "building_name")
       .populate("residence", "name")
