@@ -512,7 +512,9 @@ export const getGroupDetails = async (req, res) => {
     });
 
     const groupDetails = await Group.findById(groupId)
-      .populate("managers")
+      .populate("managers", "name email")
+      .populate("building", "building_name")
+      .populate("residence", "name")
       .lean();
 
     // Add member count to response
