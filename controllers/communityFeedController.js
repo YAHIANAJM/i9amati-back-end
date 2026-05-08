@@ -326,6 +326,8 @@ export const getAllGroups = async (req, res) => {
 
     const groups = await Group.find()
       .populate("managers", "name  email")
+      .populate("building", "building_name")
+      .populate("residence", "name")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit);

@@ -396,6 +396,8 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
         building.sharedParts.trim().toLowerCase() !== "none",
       description: building.description?.trim(),
       agent: agent._id,
+      residence: building.residence_id || null,
+      union_type: building.residence_id ? "residence" : "immeuble",
     };
 
     console.log(`[SharedParts] Creating new building "${buildingData.building_name}" with plan: ${buildingData.propertyPlanNumber}`);
@@ -604,7 +606,7 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
     agent.apartments.push(newApartment._id);
     await agent.save({ session });
 
-    // 7️⃣ Create private group and add representative
+    // 7️⃣ Create private group for this building and add representative
     const groupName = `${newBuilding.building_name} - Private Group`;
     const groupDescription = `Private discussion group for residents of ${newBuilding.building_name}`;
 
@@ -613,6 +615,8 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
       description: groupDescription,
       managers: [req.user.id],
       is_active: true,
+      building: newBuilding._id,
+      residence: newBuilding.residence || null,
     });
 
     await newGroup.save({ session });
@@ -620,6 +624,16 @@ export const createBuildingWithApartmentAndOwners = async (req, res) => {
     if (representativeUser) {
       representativeUser.groups = representativeUser.groups || [];
       representativeUser.groups.push(newGroup._id);
+
+      // Also add owner to the إقامة-level group if this building is part of a residence
+      if (newBuilding.residence) {
+        const { default: Residence } = await import("../models/Residence.js");
+        const residence = await Residence.findById(newBuilding.residence).session(session);
+        if (residence?.group) {
+          representativeUser.groups.push(residence.group);
+        }
+      }
+
       await representativeUser.save({ session });
     }
 
@@ -698,6 +712,8 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
         : null,
       description: building.description?.trim(),
       agent: agent._id,
+      residence: building.residence_id || null,
+      union_type: building.residence_id ? "residence" : "immeuble",
     };
 
     const newBuilding = new Building(buildingData);
@@ -963,7 +979,7 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
       agent.apartments.push(newApartment._id);
       await agent.save({ session });
 
-      // 3.5 Create/Find group and add representative
+      // 3.5 Create/Find building group and add representative
       const groupName = `${newBuilding.building_name} - Private Group`;
       let group = await Group.findOne({
         name: groupName,
@@ -975,13 +991,27 @@ export const createBuildingWithMultipleApartments = async (req, res) => {
           description: `Private discussion group for residents of ${newBuilding.building_name}`,
           managers: [req.user.id],
           is_active: true,
+          building: newBuilding._id,
+          residence: newBuilding.residence || null,
         });
         await group.save({ session });
       }
 
       if (representativeUser) {
         representativeUser.groups = representativeUser.groups || [];
-        representativeUser.groups.push(group._id);
+        if (!representativeUser.groups.map(String).includes(String(group._id))) {
+          representativeUser.groups.push(group._id);
+        }
+
+        // Also add owner to the إقامة-level group if this building is part of a residence
+        if (newBuilding.residence) {
+          const { default: Residence } = await import("../models/Residence.js");
+          const residence = await Residence.findById(newBuilding.residence).session(session);
+          if (residence?.group && !representativeUser.groups.map(String).includes(String(residence.group))) {
+            representativeUser.groups.push(residence.group);
+          }
+        }
+
         await representativeUser.save({ session });
       }
 

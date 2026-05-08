@@ -15,6 +15,7 @@ const ResidenceSchema = new mongoose.Schema(
     },
     totalUnits: { type: Number, default: 0 },
     occupiedUnits: { type: Number, default: 0 },
+    group: { type: mongoose.Schema.Types.ObjectId, ref: 'Group', default: null },
   },
   { timestamps: { createdAt: "created_at" } }
 );

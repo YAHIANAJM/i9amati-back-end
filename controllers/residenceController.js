@@ -1,6 +1,7 @@
 import Residence from "../models/Residence.js";
 import Building from "../models/Building.js";
 import User from "../models/User.js";
+import Group from "../models/Group.js";
 
 /**
  * GET /api/residences
@@ -76,10 +77,27 @@ export const createResidence = async (req, res) => {
 
     await newResidence.save();
 
+    // Auto-create the shared group for all buildings in this إقامة
+    const residenceGroup = new Group({
+      name: `${name} - Group`,
+      description: `Shared discussion group for all residents of ${name}`,
+      managers: [req.user.id],
+      is_active: true,
+      residence: newResidence._id,
+    });
+    await residenceGroup.save();
+
+    newResidence.group = residenceGroup._id;
+    await newResidence.save();
+
     res.status(201).json({
       success: true,
       message: "Residence created successfully",
       data: newResidence,
+      group: {
+        _id: residenceGroup._id,
+        name: residenceGroup.name,
+      },
     });
   } catch (error) {
     console.error("Error creating residence:", error);
