@@ -4,6 +4,7 @@
 import Building from "../models/Building.js";
 import Apartment from "../models/Apartment.js";
 import User from "../models/User.js";
+import ExcelJS from "exceljs";
 
 /**
  * GET /api/apartments/apartments-inbuilding/:buildingId
@@ -306,6 +307,210 @@ export const listApartments = async (req, res) => {
   } catch (error) {
     console.error("Error listing apartments:", error);
     res.status(500).json({ error: "Failed to list apartments" });
+  }
+};
+
+/**
+ * GET /api/apartments/export/building/:buildingId
+ * Export all apartments for a specific building as Excel
+ */
+export const exportBuildingApartmentsExcel = async (req, res) => {
+  try {
+    const { buildingId } = req.params;
+
+    const agent = await User.findById(req.user.id);
+    if (!agent || agent.role !== "union_agent")
+      return res.status(403).json({ error: "Access denied" });
+
+    const building = await Building.findOne({ _id: buildingId, agent: agent._id }).lean();
+    if (!building) return res.status(404).json({ error: "Building not found" });
+
+    const apartments = await Apartment.find({ building: buildingId })
+      .sort({ unit_code: 1 })
+      .lean();
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "i9amati";
+    const ws = workbook.addWorksheet("Apartments");
+
+    const BLUE = "FF4472C4";
+    const GREEN = "FF70AD47";
+    const WHITE = "FFFFFFFF";
+
+    const colCount = 10;
+    ws.mergeCells(`A1:J1`);
+    const titleCell = ws.getCell("A1");
+    titleCell.value = `Apartments — ${building.building_name}`;
+    titleCell.font = { bold: true, size: 14, color: { argb: WHITE } };
+    titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: BLUE } };
+    titleCell.alignment = { horizontal: "center", vertical: "middle" };
+    ws.getRow(1).height = 28;
+
+    ws.addRow([]);
+
+    const headers = [
+      "Unit Code", "Floor", "Area (m²)", "Usage Type",
+      "Main Plot Number", "Registration Number", "Division Number",
+      "Land Share Ratio", "% of Apartment", "Description",
+    ];
+    const headerRow = ws.addRow(headers);
+    headerRow.eachCell((cell) => {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREEN } };
+      cell.font = { bold: true, color: { argb: WHITE } };
+      cell.alignment = { horizontal: "center", vertical: "middle" };
+      cell.border = { bottom: { style: "thin" } };
+    });
+    headerRow.height = 20;
+
+    apartments.forEach((apt) => {
+      const row = ws.addRow([
+        apt.unit_code || "",
+        apt.floor ?? "",
+        apt.area_sqm ?? "",
+        apt.usage_type || "",
+        apt.main_plot_number || "",
+        apt.registration_number || "",
+        apt.division_number ?? "",
+        apt.land_share_ratio || "",
+        apt.percentage_of_apartment ?? "",
+        apt.unit_description || "",
+      ]);
+      row.getCell(3).numFmt = "#,##0.00";
+    });
+
+    [14, 8, 12, 16, 22, 22, 16, 18, 20, 28].forEach((w, i) => {
+      ws.getColumn(i + 1).width = w;
+    });
+
+    ws.addRow([]);
+    const summaryRow = ws.addRow([`Total Apartments: ${apartments.length}`]);
+    summaryRow.getCell(1).font = { bold: true };
+
+    const safeName = building.building_name.replace(/[^a-zA-Z0-9؀-ۿ_\- ]/g, "");
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="apartments-${safeName}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error("Error exporting building apartments:", error);
+    res.status(500).json({ error: "Failed to export apartments" });
+  }
+};
+
+/**
+ * GET /api/apartments/export/all
+ * Export all buildings + apartments grouped by type (individual vs إقامة)
+ */
+export const exportAllApartmentsExcel = async (req, res) => {
+  try {
+    const agent = await User.findById(req.user.id);
+    if (!agent || agent.role !== "union_agent")
+      return res.status(403).json({ error: "Access denied" });
+
+    const buildings = await Building.find({ agent: agent._id }).lean();
+
+    const BLUE = "FF4472C4";
+    const TEAL = "FF00897B";
+    const GREEN = "FF70AD47";
+    const WHITE = "FFFFFFFF";
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "i9amati";
+
+    const HEADERS = [
+      "Building", "Type", "Unit Code", "Floor", "Area (m²)", "Usage Type",
+      "Main Plot Number", "Registration Number", "Division Number",
+      "Land Share Ratio", "% of Apartment",
+    ];
+    const COL_WIDTHS = [28, 16, 14, 8, 12, 16, 22, 22, 16, 18, 20];
+
+    const buildSheet = (ws, headerColor, sheetTitle) => {
+      ws.mergeCells("A1:K1");
+      const titleCell = ws.getCell("A1");
+      titleCell.value = sheetTitle;
+      titleCell.font = { bold: true, size: 14, color: { argb: WHITE } };
+      titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: headerColor } };
+      titleCell.alignment = { horizontal: "center", vertical: "middle" };
+      ws.getRow(1).height = 28;
+
+      ws.addRow([]);
+
+      const headerRow = ws.addRow(HEADERS);
+      headerRow.eachCell((cell) => {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREEN } };
+        cell.font = { bold: true, color: { argb: WHITE } };
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.border = { bottom: { style: "thin" } };
+      });
+      headerRow.height = 20;
+      COL_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    };
+
+    const addBuildingRows = (ws, building, typeLabel, apartments) => {
+      if (apartments.length === 0) {
+        ws.addRow([building.building_name, typeLabel, "", "", "", "", "", "", "", "", ""]);
+        return;
+      }
+      apartments.forEach((apt) => {
+        const row = ws.addRow([
+          building.building_name,
+          typeLabel,
+          apt.unit_code || "",
+          apt.floor ?? "",
+          apt.area_sqm ?? "",
+          apt.usage_type || "",
+          apt.main_plot_number || "",
+          apt.registration_number || "",
+          apt.division_number ?? "",
+          apt.land_share_ratio || "",
+          apt.percentage_of_apartment ?? "",
+        ]);
+        row.getCell(5).numFmt = "#,##0.00";
+      });
+    };
+
+    const immeubleBuildings = buildings.filter((b) => b.union_type !== "residence");
+    const residenceBuildings = buildings.filter((b) => b.union_type === "residence");
+
+    if (immeubleBuildings.length > 0) {
+      const ws = workbook.addWorksheet("عمارة - Individual");
+      buildSheet(ws, BLUE, "Individual Buildings — عمارة");
+      let total = 0;
+      for (const b of immeubleBuildings) {
+        const apts = await Apartment.find({ building: b._id }).sort({ unit_code: 1 }).lean();
+        addBuildingRows(ws, b, "Individual", apts);
+        total += apts.length;
+      }
+      ws.addRow([]);
+      const sr = ws.addRow([`Total: ${immeubleBuildings.length} buildings, ${total} apartments`]);
+      sr.getCell(1).font = { bold: true };
+    }
+
+    if (residenceBuildings.length > 0) {
+      const ws = workbook.addWorksheet("إقامة - Residence");
+      buildSheet(ws, TEAL, "Residence Buildings — إقامة");
+      let total = 0;
+      for (const b of residenceBuildings) {
+        const apts = await Apartment.find({ building: b._id }).sort({ unit_code: 1 }).lean();
+        addBuildingRows(ws, b, "Residence (إقامة)", apts);
+        total += apts.length;
+      }
+      ws.addRow([]);
+      const sr = ws.addRow([`Total: ${residenceBuildings.length} buildings, ${total} apartments`]);
+      sr.getCell(1).font = { bold: true };
+    }
+
+    if (buildings.length === 0) {
+      workbook.addWorksheet("No Data").addRow(["No buildings found"]);
+    }
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="all-apartments-${Date.now()}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error("Error exporting all apartments:", error);
+    res.status(500).json({ error: "Failed to export apartments" });
   }
 };
 

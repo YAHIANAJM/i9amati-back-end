@@ -10,9 +10,15 @@ import {
   editApartment,
   getApartmentById,
   createApartmentForBuilding,
+  exportBuildingApartmentsExcel,
+  exportAllApartmentsExcel,
 } from "../controllers/apartmentController.js";
 
 const router = express.Router();
+
+// Export routes (must come before /:id to avoid param clash)
+router.get("/export/all", auth, requireRole("union_agent"), exportAllApartmentsExcel);
+router.get("/export/building/:buildingId", auth, requireRole("union_agent"), exportBuildingApartmentsExcel);
 
 // List all apartments for current union agent
 router.get("/", auth, requireRole("union_agent"), listApartments);
